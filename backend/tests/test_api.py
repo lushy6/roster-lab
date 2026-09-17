@@ -1,6 +1,8 @@
 from fastapi.testclient import TestClient
+from datetime import date, datetime, timezone
 
 from app.demo import demo_data
+from app.domain import Player, PlayerSnapshot, SalaryRecord
 from app.main import _candidates, create_app
 
 
@@ -59,6 +61,15 @@ def test_demo_starters_do_not_fill_bullpen_roles():
     assert "RP" not in starter.eligible_positions
     assert "RP" in reliever.eligible_positions
     assert "SP" not in reliever.eligible_positions
+
+
+def test_unqualified_two_way_record_does_not_fill_pitching_slots():
+    player = Player(10, "Hitter pitcher", "Club", "TWP", {"TWP"},
+                    hitting={2025: {"plateAppearances": 500, "ops": ".850"}})
+    snapshot = PlayerSnapshot(2026, datetime.now(timezone.utc), [], {10: player})
+    candidates, _ = _candidates(snapshot, [SalaryRecord(10, 2026, 1_000_000,
+                                                          "https://example.org/10", date(2026, 9, 17))])
+    assert candidates[0].eligible_positions.isdisjoint({"SP", "RP"})
 
 
 def test_salary_template_lists_player_ids_and_names(tmp_path):

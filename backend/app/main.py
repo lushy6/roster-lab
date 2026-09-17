@@ -44,9 +44,11 @@ def _candidates(snapshot, salaries):
             recent = list(player.pitching.values())
             starts = sum(int(stat.get("gamesStarted", 0) or 0) for stat in recent)
             games = sum(int(stat.get("gamesPlayed", 0) or 0) for stat in recent)
-            if starts >= 5 or not games:
+            innings = sum(float(str(stat.get("inningsPitched", 0) or 0).replace(",", "")) for stat in recent)
+            has_pitching_history = games > 0 or innings > 0
+            if has_pitching_history and starts >= 5:
                 positions.add("SP")
-            if not games or starts / games < 0.5:
+            if has_pitching_history and (games == 0 or starts / games < 0.5):
                 positions.add("RP")
         if player.is_two_way:
             positions.add("DH")
