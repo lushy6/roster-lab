@@ -1,4 +1,6 @@
 from app.optimizer import Candidate, RosterRules, optimize_roster, validate_roster
+from app.demo import demo_data
+from app.main import _candidates
 
 
 def test_exact_solver_beats_value_per_dollar_greedy_choice():
@@ -51,3 +53,10 @@ def test_validator_rejects_duplicate_player_even_when_slots_filled():
                                                 result.picks[1].team, result.picks[1].slot,
                                                 result.picks[1].salary, result.picks[1].war, False)
     assert "A player fills multiple slots" in validate_roster(result, rules, 2_000_000)
+
+
+def test_demo_pool_reaches_proven_optimum():
+    snapshot, salaries = demo_data()
+    candidates, _ = _candidates(snapshot, salaries)
+    result = optimize_roster(candidates, RosterRules(), 150_000_000)
+    assert result.status == "optimal"

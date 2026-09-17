@@ -59,21 +59,34 @@ def _eligible(candidate: Candidate, slot: str) -> bool:
     return slot in positions
 
 
+def _role(slot: str) -> str:
+    if slot.startswith("SP"):
+        return "SP"
+    if slot.startswith("RP"):
+        return "RP"
+    if slot.startswith("BN"):
+        return "BN"
+    if slot == "C2":
+        return "C"
+    return slot
+
+
 def _solve(players: list[Candidate], rules: RosterRules, cap_usd: int | None,
            locked_ids: set[int], excluded_ids: set[int], *, minimize_cost: bool = False) -> RosterResult:
     model = cp_model.CpModel()
     variables = {}
+    roles = {_role(slot) for slot in rules.slots}
     for player in players:
         if player.id in excluded_ids:
             continue
-        for slot in rules.slots:
-            if _eligible(player, slot):
-                variables[player.id, slot] = model.new_bool_var(f"p{player.id}_{slot}")
-    for slot in rules.slots:
-        options = [var for (player_id, name), var in variables.items() if name == slot]
+        for role in roles:
+            if _eligible(player, role):
+                variables[player.id, role] = model.new_bool_var(f"p{player.id}_{role}")
+    for role in roles:
+        options = [var for (player_id, name), var in variables.items() if name == role]
         if not options:
-            return RosterResult("infeasible", reason=f"No eligible players for {slot}")
-        model.add(sum(options) == 1)
+            return RosterResult("infeasible", reason=f"No eligible players for {role}")
+        model.add(sum(options) == sum(1 for slot in rules.slots if _role(slot) == role))
     for player in players:
         options = [var for (player_id, _), var in variables.items() if player_id == player.id]
         if options:
@@ -83,8 +96,8 @@ def _solve(players: list[Candidate], rules: RosterRules, cap_usd: int | None,
                 model.add(sum(options) <= 1)
         elif player.id in locked_ids:
             return RosterResult("infeasible", reason=f"Locked player {player.name} has no eligible slot")
-    salary_expr = sum(player.salary * var for player in players for slot in rules.slots
-                      if (var := variables.get((player.id, slot))) is not None)
+    salary_expr = sum(player.salary * var for player in players for role in roles
+                      if (var := variables.get((player.id, role))) is not None)
     if cap_usd is not None:
         model.add(salary_expr <= cap_usd)
     if minimize_cost:
@@ -92,17 +105,22 @@ def _solve(players: list[Candidate], rules: RosterRules, cap_usd: int | None,
     else:
         # Scale WAR to integer points, and prefer lower salary for exact WAR ties.
         model.maximize(sum((round(player.war * 1000) * 1_000_000 - player.salary // 1000) * var
-                           for player in players for slot in rules.slots
-                           if (var := variables.get((player.id, slot))) is not None))
+                           for player in players for role in roles
+                           if (var := variables.get((player.id, role))) is not None))
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = 15
     solver.parameters.num_search_workers = 1
     status = solver.solve(model)
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         return RosterResult("infeasible", reason="No roster satisfies these constraints")
-    picks = [Pick(player.id, player.name, player.team, slot, player.salary, player.war, player.is_two_way)
-             for player in players for slot in rules.slots
-             if (var := variables.get((player.id, slot))) is not None and solver.value(var)]
+    chosen_by_role = {role: sorted((player for player in players
+                                    if (var := variables.get((player.id, role))) is not None and solver.value(var)),
+                                   key=lambda player: (-player.war, player.id))
+                      for role in roles}
+    picks = []
+    for slot in rules.slots:
+        player = chosen_by_role[_role(slot)].pop(0)
+        picks.append(Pick(player.id, player.name, player.team, slot, player.salary, player.war, player.is_two_way))
     result = RosterResult("optimal" if status == cp_model.OPTIMAL else "feasible", picks,
                           sum(p.salary for p in picks), round(sum(p.war for p in picks), 3))
     problems = validate_roster(result, rules, cap_usd)
