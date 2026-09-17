@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 
 
 @dataclass(frozen=True)
@@ -22,3 +22,25 @@ class ImportIssue:
 class Coverage:
     priced_count: int
     missing_player_ids: list[int] = field(default_factory=list)
+
+
+@dataclass
+class Player:
+    id: int
+    name: str
+    team: str
+    primary_position: str
+    eligible_positions: set[str]
+    hitting: dict[int, dict] = field(default_factory=dict)
+    pitching: dict[int, dict] = field(default_factory=dict)
+    fielding: dict[int, list[dict]] = field(default_factory=dict)
+    is_two_way: bool = False
+
+
+@dataclass
+class PlayerSnapshot:
+    season: int
+    fetched_at: datetime
+    source_urls: list[str]
+    players: dict[int, Player]
+    adapter_version: str = "mlb-v1"
