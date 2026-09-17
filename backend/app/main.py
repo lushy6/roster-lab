@@ -22,6 +22,13 @@ from .value import project_values
 DEFAULT_DB = Path(__file__).resolve().parents[2] / "data" / "roster.db"
 
 
+def _numeric(value: object) -> float:
+    try:
+        return float(str(value).replace(",", ""))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 class ScenarioRequest(BaseModel):
     season: int = Field(ge=1900, le=2100)
     cap_usd: int = Field(gt=0, le=MAX_SALARY_USD)
@@ -44,7 +51,7 @@ def _candidates(snapshot, salaries):
             recent = list(player.pitching.values())
             starts = sum(int(stat.get("gamesStarted", 0) or 0) for stat in recent)
             games = sum(int(stat.get("gamesPlayed", 0) or 0) for stat in recent)
-            innings = sum(float(str(stat.get("inningsPitched", 0) or 0).replace(",", "")) for stat in recent)
+            innings = sum(_numeric(stat.get("inningsPitched", 0)) for stat in recent)
             has_pitching_history = games > 0 or innings > 0
             if has_pitching_history and starts >= 5:
                 positions.add("SP")
