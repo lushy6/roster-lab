@@ -31,7 +31,8 @@ def _stats(client: httpx.Client, season: int, group: str, urls: list[str]) -> li
                   "playerPool": "ALL", "limit": 2000, "offset": offset}
         payload = _get_json(client, url, params)
         urls.append(str(httpx.URL(url, params=params)))
-        rows = payload.get("stats", [{}])[0].get("splits", [])
+        stat_groups = payload.get("stats") or []
+        rows = stat_groups[0].get("splits", []) if stat_groups else []
         result.extend(rows)
         if len(rows) < 2000:
             break

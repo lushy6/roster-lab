@@ -34,3 +34,14 @@ def test_snapshot_combines_live_player_and_prior_stats():
     assert snapshot.players[20].pitching[2025]["era"] == "3.50"
     assert snapshot.fetched_at == at
     assert any("/sports/1/players" in url for url in calls)
+
+
+def test_snapshot_handles_a_season_with_no_stats_group():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/players"):
+            return httpx.Response(200, json={"people": [{"id": 10, "fullName": "Player", "primaryPosition": {"abbreviation": "P"}}]})
+        return httpx.Response(200, json={"stats": []})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    snapshot = fetch_player_snapshot(2026, client)
+    assert snapshot.players[10].pitching == {}
