@@ -13,9 +13,9 @@ from pydantic import BaseModel, Field
 from .demo import demo_data
 from .mlb import fetch_player_snapshot
 from .optimizer import Candidate, RosterRules, optimize_roster
-from .salaries import load_salary_csv, salary_coverage
-from .storage import (get_scenario, latest_salaries, latest_snapshot, save_salaries,
-                      save_scenario, save_snapshot)
+from .salaries import MAX_SALARY_USD, load_salary_csv, salary_coverage
+from .storage import (get_scenario, latest_salaries, latest_snapshot, list_scenarios,
+                      save_salaries, save_scenario, save_snapshot)
 from .value import project_values
 
 
@@ -24,7 +24,7 @@ DEFAULT_DB = Path(__file__).resolve().parents[2] / "data" / "roster.db"
 
 class ScenarioRequest(BaseModel):
     season: int = Field(ge=1900, le=2100)
-    cap_usd: int = Field(gt=0)
+    cap_usd: int = Field(gt=0, le=MAX_SALARY_USD)
     locked_ids: list[int] = []
     excluded_ids: list[int] = []
 
@@ -119,11 +119,12 @@ def create_app(db_path: Path = DEFAULT_DB) -> FastAPI:
         by_id = {record.player_id: record for record in salary_entry[1]} if salary_entry else {}
         buffer = io.StringIO(newline="")
         writer = csv.writer(buffer)
-        writer.writerow(["player_id", "player_name", "season", "base_salary_usd", "source_url", "checked_at"])
+        writer.writerow(["player_id", "player_name", "season", "base_salary_usd", "source_url", "checked_at", "reviewer_note"])
         for player in sorted(snapshot_entry[1].players.values(), key=lambda p: p.name):
             record = by_id.get(player.id)
             writer.writerow([player.id, player.name, season, record.base_salary_usd if record else "",
-                             record.source_url if record else "", record.checked_at.isoformat() if record else ""])
+                             record.source_url if record else "", record.checked_at.isoformat() if record else "",
+                             record.reviewer_note if record else ""])
         return Response(buffer.getvalue(), media_type="text/csv",
                         headers={"Content-Disposition": f'attachment; filename="salary-template-{season}.csv"'})
 
@@ -149,6 +150,8 @@ def create_app(db_path: Path = DEFAULT_DB) -> FastAPI:
         known_ids = {candidate.id for candidate in candidates}
         if set(request.locked_ids) - known_ids:
             raise HTTPException(422, detail={"code": "unknown_locked_player", "message": "A locked player has no salary or is outside this season"})
+        if set(request.excluded_ids) - known_ids:
+            raise HTTPException(422, detail={"code": "unknown_excluded_player", "message": "An excluded player has no salary or is outside this season"})
         result = optimize_roster(candidates, RosterRules(), request.cap_usd,
                                  set(request.locked_ids), set(request.excluded_ids))
         if result.status == "infeasible":
@@ -165,20 +168,39 @@ def create_app(db_path: Path = DEFAULT_DB) -> FastAPI:
             pick["pitching_war"] = value.pitching_war
             pick["salary_source_url"] = salary_record.source_url
             pick["salary_checked_at"] = salary_record.checked_at.isoformat()
+            pick["salary_reviewer_note"] = salary_record.reviewer_note
         alternatives = []
+        primary_ids = {pick["player_id"] for pick in roster["picks"]}
+        locked_ids = set(request.locked_ids)
+        avoid_ids = primary_ids - locked_ids
         for alt_cap in (round(request.cap_usd * 0.9), round(request.cap_usd * 1.1)):
             alt = optimize_roster(candidates, RosterRules(), alt_cap,
-                                  set(request.locked_ids), set(request.excluded_ids))
+                                  locked_ids, set(request.excluded_ids),
+                                  avoid_ids=avoid_ids)
+            distinct = bool(avoid_ids) and alt.status != "infeasible"
+            if not distinct:
+                alt = optimize_roster(candidates, RosterRules(), alt_cap,
+                                      locked_ids, set(request.excluded_ids))
             if alt.status != "infeasible":
-                alternatives.append({"cap_usd": alt_cap, "roster": asdict(alt)})
+                alternatives.append({"cap_usd": alt_cap, "roster": asdict(alt),
+                                     "distinct_from_primary": distinct})
+        coverage = salary_coverage(set(snapshot.players), salaries, request.season)
         payload = {"season": request.season, "cap_usd": request.cap_usd, "locked_ids": request.locked_ids,
                    "excluded_ids": request.excluded_ids, "roster": roster, "alternatives": alternatives,
                    "is_demo": is_demo,
                    "model_version": "war-proxy-v1", "snapshot_at": snapshot.fetched_at.isoformat(),
+                   "mlb_source_urls": snapshot.source_urls,
+                   "salary_coverage": {"priced_count": coverage.priced_count,
+                                       "total_players": len(snapshot.players),
+                                       "missing_player_ids": coverage.missing_player_ids},
                    "salary_sources": sorted({record.source_url for record in salaries
                                              if record.player_id in {pick.player_id for pick in result.picks}})}
         identifier = save_scenario(db_path, request.season, snapshot_id, salary_id, payload)
         return dict(payload, id=identifier, snapshot_id=snapshot_id, salary_id=salary_id)
+
+    @app.get("/api/scenarios")
+    def scenarios(season: int | None = None):
+        return list_scenarios(db_path, season)
 
     @app.get("/api/scenarios/{identifier}")
     def scenario(identifier: str):

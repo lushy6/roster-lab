@@ -67,14 +67,16 @@ def _role(slot: str) -> str:
     if slot.startswith("BN"):
         return "BN"
     if slot == "C2":
-        return "C"
+        return "C2"
     return slot
 
 
 def _solve(players: list[Candidate], rules: RosterRules, cap_usd: int | None,
-           locked_ids: set[int], excluded_ids: set[int], *, minimize_cost: bool = False) -> RosterResult:
+           locked_ids: set[int], excluded_ids: set[int], *, minimize_cost: bool = False,
+           avoid_ids: set[int] | None = None) -> RosterResult:
     model = cp_model.CpModel()
     variables = {}
+    by_id = {player.id: player for player in players}
     roles = {_role(slot) for slot in rules.slots}
     for player in players:
         if player.id in excluded_ids:
@@ -87,6 +89,12 @@ def _solve(players: list[Candidate], rules: RosterRules, cap_usd: int | None,
         if not options:
             return RosterResult("infeasible", reason=f"No eligible players for {role}")
         model.add(sum(options) == sum(1 for slot in rules.slots if _role(slot) == role))
+    if rules.require_bench_catcher and "BN" in roles and "C2" not in roles:
+        bench_catchers = [var for (player_id, role), var in variables.items()
+                          if role == "BN" and _eligible(by_id[player_id], "C2")]
+        if not bench_catchers:
+            return RosterResult("infeasible", reason="No eligible bench catcher")
+        model.add(sum(bench_catchers) >= 1)
     for player in players:
         options = [var for (player_id, _), var in variables.items() if player_id == player.id]
         if options:
@@ -96,6 +104,11 @@ def _solve(players: list[Candidate], rules: RosterRules, cap_usd: int | None,
                 model.add(sum(options) <= 1)
         elif player.id in locked_ids:
             return RosterResult("infeasible", reason=f"Locked player {player.name} has no eligible slot")
+    avoid_ids = avoid_ids or set()
+    if avoid_ids:
+        avoid_variables = [var for (player_id, _), var in variables.items() if player_id in avoid_ids]
+        if avoid_variables:
+            model.add(sum(avoid_variables) <= len(avoid_ids) - 1)
     salary_expr = sum(player.salary * var for player in players for role in roles
                       if (var := variables.get((player.id, role))) is not None)
     if cap_usd is not None:
@@ -130,12 +143,13 @@ def _solve(players: list[Candidate], rules: RosterRules, cap_usd: int | None,
 
 
 def optimize_roster(players: list[Candidate], rules: RosterRules, cap_usd: int,
-                    locked_ids: set[int] | None = None, excluded_ids: set[int] | None = None) -> RosterResult:
+                    locked_ids: set[int] | None = None, excluded_ids: set[int] | None = None,
+                    avoid_ids: set[int] | None = None) -> RosterResult:
     locked_ids = locked_ids or set()
     excluded_ids = excluded_ids or set()
     if locked_ids & excluded_ids:
         return RosterResult("infeasible", reason="A player cannot be both locked and excluded")
-    result = _solve(players, rules, cap_usd, locked_ids, excluded_ids)
+    result = _solve(players, rules, cap_usd, locked_ids, excluded_ids, avoid_ids=avoid_ids)
     if result.status == "infeasible" and result.reason == "No roster satisfies these constraints":
         cheapest = _solve(players, rules, None, locked_ids, excluded_ids, minimize_cost=True)
         if cheapest.status == "optimal":

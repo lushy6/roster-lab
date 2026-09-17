@@ -37,3 +37,12 @@ def test_two_way_adds_hitting_and_pitching_once():
     assert value.hitting_war > 0
     assert value.pitching_war > 0
     assert value.estimated_war == round(value.hitting_war + value.pitching_war, 3)
+
+
+def test_input_seasons_only_list_seasons_used_by_projection():
+    player = Player(10, "Hitter", "Club", "1B", {"1B"}, hitting={
+        2022: {"plateAppearances": 600, "ops": ".900"},
+        2024: {"plateAppearances": 600, "ops": ".700"},
+        2025: {"plateAppearances": 600, "ops": ".800"},
+    })
+    assert project_values(snapshot(player), 2026)[10].input_seasons == [2024, 2025]

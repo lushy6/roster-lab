@@ -68,3 +68,20 @@ def test_validator_catches_wrong_position_assignment():
     result = optimize_roster([candidate], rules, 2_000_000)
     result.picks[0] = result.picks[0].__class__(1, "Catcher", "A", "1B", 1_000_000, 1.0, False)
     assert "Player 1 is not eligible for 1B" in validate_roster(result, rules, 2_000_000, [candidate])
+
+
+def test_bench_catcher_requirement_is_enforced_for_custom_bench_slots():
+    rules = RosterRules(slots=("1B", "BN1"), require_bench_catcher=True)
+    players = [Candidate(1, "First", "A", 1_000_000, 2.0, {"1B"}),
+               Candidate(2, "Bench bat", "B", 1_000_000, 1.5, {"DH"})]
+    result = optimize_roster(players, rules, 2_000_000)
+    assert result.status == "infeasible"
+
+
+def test_catcher_can_fill_the_explicit_c2_slot():
+    rules = RosterRules(slots=("C", "C2"), require_bench_catcher=True)
+    players = [Candidate(1, "Catcher one", "A", 1_000_000, 2.0, {"C"}),
+               Candidate(2, "Catcher two", "B", 1_000_000, 1.0, {"C"})]
+    result = optimize_roster(players, rules, 2_000_000)
+    assert result.status == "optimal"
+    assert {pick.slot for pick in result.picks} == {"C", "C2"}

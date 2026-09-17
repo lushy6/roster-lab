@@ -58,7 +58,8 @@ def project_values(snapshot: PlayerSnapshot, target_season: int) -> dict[int, Va
     for player in snapshot.players.values():
         hitting_war, pa = _hitting(player, target_season)
         pitching_war, ip = _pitching(player, target_season)
-        years = sorted({year for year in (*player.hitting, *player.pitching) if year < target_season})
+        years = sorted({year for year, _ in _recent(player.hitting, target_season)} |
+                       {year for year, _ in _recent(player.pitching, target_season)})
         uncertainty = "high" if pa < 100 and ip < 30 else "medium" if pa < 300 and ip < 90 else "low"
         result[player.id] = ValueProjection(player.id, round(hitting_war + pitching_war, 3),
                                             hitting_war, pitching_war, uncertainty, years)

@@ -70,4 +70,14 @@ def fetch_player_snapshot(season: int, client: httpx.Client, *, fetched_at: date
                     player.fielding.setdefault(prior_season, []).append({"position": position, "stat": stat})
                     if position and int(stat.get("gamesStarted", 0) or 0) >= 5:
                         player.eligible_positions.add(position)
+    for player in players.values():
+        recent_hitting_pa = sum(float(str(stat.get("plateAppearances", 0) or 0).replace(",", ""))
+                                for stat in player.hitting.values())
+        recent_pitching_ip = sum(float(str(stat.get("inningsPitched", 0) or 0).replace(",", ""))
+                                 for stat in player.pitching.values())
+        recent_fielding_starts = sum(int(stat.get("gamesStarted", 0) or 0)
+                                     for rows in player.fielding.values() for row in rows
+                                     for stat in [row.get("stat", {})])
+        if recent_hitting_pa >= 60 and recent_pitching_ip >= 20 and recent_fielding_starts >= 20:
+            player.is_two_way = True
     return PlayerSnapshot(season=season, fetched_at=fetched_at, source_urls=urls, players=players)

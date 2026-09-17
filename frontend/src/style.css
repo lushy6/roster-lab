@@ -50,6 +50,13 @@ a { color: inherit; }
 .data-actions { display: grid; gap: 8px; margin-top: 20px; }
 .data-actions button, .upload-button, .template-link { border: 1px solid #9fb5c1; background: white; padding: 10px 12px; color: #173c54; text-align: left; border-radius: 3px; font-size: 13px; font-weight: 700; cursor: pointer; text-decoration: none; }
 .data-actions button:hover, .upload-button:hover, .template-link:hover { background: #edf4f7; }
+.history { border-top: 1px solid #d5e0e4; margin-top: 20px; padding-top: 16px; }
+.history h3 { font-family: 'Barlow Condensed', 'Arial Narrow', sans-serif; font-size: 22px; margin: 0 0 9px; color: #244c64; }
+.history-list { display: grid; gap: 7px; max-height: 220px; overflow-y: auto; }
+.history-button { display: grid; gap: 3px; border: 1px solid #c4d5dc; background: #f8fbfb; padding: 9px 10px; text-align: left; color: #173c54; border-radius: 3px; }
+.history-button:hover { background: #edf4f7; }
+.history-button span, .history-button small { font-size: 11px; color: #68818e; }
+.history-button strong { font-family: 'Barlow Condensed', 'Arial Narrow', sans-serif; font-size: 20px; }
 .upload-button { position: relative; }
 .upload-button input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
 .upload-button:focus-within { outline: 3px solid #d13f47; outline-offset: 3px; }

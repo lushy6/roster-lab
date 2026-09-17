@@ -41,3 +41,16 @@ def test_blank_template_salary_rows_are_skipped(tmp_path: Path):
     rows, issues = load_salary_csv(source)
     assert [row.player_id for row in rows] == [11]
     assert issues == []
+
+
+def test_import_preserves_reviewer_note_and_rejects_unbounded_salary(tmp_path: Path):
+    source = tmp_path / "salaries.csv"
+    source.write_text(
+        "player_id,season,base_salary_usd,source_url,checked_at,reviewer_note\n"
+        "10,2026,1000000,https://example.org/10,2026-09-17,Official opening day salary\n"
+        "11,2026,3000000000,https://example.org/11,2026-09-17,Too large\n",
+        encoding="utf-8",
+    )
+    rows, issues = load_salary_csv(source)
+    assert rows[0].reviewer_note == "Official opening day salary"
+    assert [issue.code for issue in issues] == ["invalid_value"]

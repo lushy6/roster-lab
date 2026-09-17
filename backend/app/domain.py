@@ -9,6 +9,7 @@ class SalaryRecord:
     base_salary_usd: int
     source_url: str
     checked_at: date
+    reviewer_note: str = ""
 
 
 @dataclass(frozen=True)

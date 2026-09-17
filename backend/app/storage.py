@@ -64,8 +64,10 @@ def latest_salaries(path: Path, season: int) -> tuple[str, list[SalaryRecord], b
         row = db.execute("SELECT * FROM salaries WHERE season=? ORDER BY rowid DESC LIMIT 1", (season,)).fetchone()
     if row is None:
         return None
-    records = [SalaryRecord(**dict(raw, checked_at=date.fromisoformat(raw["checked_at"])))
-               for raw in json.loads(row["payload"])]
+    records = []
+    for raw in json.loads(row["payload"]):
+        raw.setdefault("reviewer_note", "")
+        records.append(SalaryRecord(**dict(raw, checked_at=date.fromisoformat(raw["checked_at"]))))
     return row["id"], records, bool(row["is_demo"])
 
 
@@ -84,3 +86,31 @@ def get_scenario(path: Path, identifier: str) -> dict | None:
         return None
     return dict(json.loads(row["payload"]), id=row["id"], snapshot_id=row["snapshot_id"],
                 salary_id=row["salary_id"], created_at=row["created_at"])
+
+
+def list_scenarios(path: Path, season: int | None = None, limit: int = 20) -> list[dict]:
+    query = "SELECT * FROM scenarios"
+    params: list[object] = []
+    if season is not None:
+        query += " WHERE season=?"
+        params.append(season)
+    query += " ORDER BY rowid DESC LIMIT ?"
+    params.append(limit)
+    with _connect(path) as db:
+        rows = db.execute(query, tuple(params)).fetchall()
+    summaries = []
+    for row in rows:
+        payload = json.loads(row["payload"])
+        roster = payload.get("roster", {})
+        summaries.append({
+            "id": row["id"],
+            "season": row["season"],
+            "created_at": row["created_at"],
+            "cap_usd": payload.get("cap_usd"),
+            "total_salary": roster.get("total_salary", 0),
+            "total_war": roster.get("total_war", 0),
+            "is_demo": bool(payload.get("is_demo")),
+            "snapshot_id": row["snapshot_id"],
+            "salary_id": row["salary_id"],
+        })
+    return summaries

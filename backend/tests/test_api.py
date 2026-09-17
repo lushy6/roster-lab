@@ -19,6 +19,10 @@ def test_demo_scenario_is_saved_and_reopened(tmp_path):
     assert all(pick["salary_source_url"] for pick in body["roster"]["picks"])
     assert body["alternatives"]
     assert all(alt["roster"]["total_salary"] <= alt["cap_usd"] for alt in body["alternatives"])
+    primary_ids = {pick["player_id"] for pick in body["roster"]["picks"]}
+    assert any(alt.get("distinct_from_primary") and
+               {pick["player_id"] for pick in alt["roster"]["picks"]} != primary_ids
+               for alt in body["alternatives"])
     reopened = client.get(f"/api/scenarios/{body['id']}")
     assert reopened.status_code == 200
     assert reopened.json()["snapshot_id"] == body["snapshot_id"]
@@ -65,3 +69,24 @@ def test_salary_template_lists_player_ids_and_names(tmp_path):
     assert response.headers["content-type"].startswith("text/csv")
     assert "player_id,player_name,season,base_salary_usd,source_url,checked_at" in response.text
     assert "Demo C 1" in response.text
+
+
+def test_api_rejects_unknown_excluded_player_and_unbounded_cap(tmp_path):
+    client = TestClient(create_app(tmp_path / "test.db"))
+    client.post("/api/demo/seed")
+    unknown = client.post("/api/scenarios", json={"season": 2026, "cap_usd": 150_000_000,
+                                                  "excluded_ids": [123456789]})
+    assert unknown.status_code == 422
+    assert unknown.json()["detail"]["code"] == "unknown_excluded_player"
+    huge = client.post("/api/scenarios", json={"season": 2026, "cap_usd": 10**30})
+    assert huge.status_code == 422
+
+
+def test_saved_scenario_history_lists_recent_scenarios(tmp_path):
+    client = TestClient(create_app(tmp_path / "test.db"))
+    client.post("/api/demo/seed")
+    made = client.post("/api/scenarios", json={"season": 2026, "cap_usd": 150_000_000}).json()
+    history = client.get("/api/scenarios?season=2026")
+    assert history.status_code == 200
+    assert history.json()[0]["id"] == made["id"]
+    assert history.json()[0]["total_war"] == made["roster"]["total_war"]

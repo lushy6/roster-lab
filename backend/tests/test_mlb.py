@@ -45,3 +45,28 @@ def test_snapshot_handles_a_season_with_no_stats_group():
     client = httpx.Client(transport=httpx.MockTransport(handler))
     snapshot = fetch_player_snapshot(2026, client)
     assert snapshot.players[10].pitching == {}
+
+
+def test_snapshot_identifies_two_way_player_from_recent_usage():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/players"):
+            return httpx.Response(200, json={"people": [{
+                "id": 10, "fullName": "Two Way", "primaryPosition": {"abbreviation": "P"},
+            }]})
+        group = request.url.params["group"]
+        if group == "hitting":
+            return httpx.Response(200, json={"stats": [{"splits": [{
+                "player": {"id": 10}, "stat": {"plateAppearances": 100, "gamesPlayed": 30},
+            }]}]})
+        if group == "pitching":
+            return httpx.Response(200, json={"stats": [{"splits": [{
+                "player": {"id": 10}, "stat": {"inningsPitched": "25.0", "gamesStarted": 2,
+                "gamesPlayed": 12},
+            }]}]})
+        return httpx.Response(200, json={"stats": [{"splits": [{
+            "player": {"id": 10}, "position": {"abbreviation": "RF"}, "stat": {"gamesStarted": 20},
+        }]}]})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    snapshot = fetch_player_snapshot(2026, client)
+    assert snapshot.players[10].is_two_way is True
