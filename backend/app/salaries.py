@@ -6,6 +6,9 @@ from urllib.parse import urlparse
 from .domain import Coverage, ImportIssue, SalaryRecord
 
 
+MAX_SALARY_USD = 2_000_000_000
+
+
 def load_salary_csv(path: Path) -> tuple[list[SalaryRecord], list[ImportIssue]]:
     records: list[SalaryRecord] = []
     issues: list[ImportIssue] = []
@@ -16,13 +19,15 @@ def load_salary_csv(path: Path) -> tuple[list[SalaryRecord], list[ImportIssue]]:
         if not required.issubset(reader.fieldnames or []):
             raise ValueError(f"Salary CSV requires columns: {', '.join(sorted(required))}")
         for row_number, row in enumerate(reader, start=2):
+            if not (row["base_salary_usd"] or "").strip():
+                continue
             try:
                 player_id = int(row["player_id"])
                 season = int(row["season"])
                 salary = int(row["base_salary_usd"])
                 checked_at = date.fromisoformat(row["checked_at"])
-                if player_id <= 0 or season < 1900 or salary <= 0:
-                    raise ValueError("IDs, season, and salary must be positive")
+                if player_id <= 0 or season < 1900 or salary <= 0 or salary > MAX_SALARY_USD:
+                    raise ValueError(f"IDs and season must be positive; salary must be between $1 and ${MAX_SALARY_USD:,}")
             except (TypeError, ValueError) as exc:
                 issues.append(ImportIssue(row_number, "invalid_value", str(exc)))
                 continue
@@ -36,7 +41,8 @@ def load_salary_csv(path: Path) -> tuple[list[SalaryRecord], list[ImportIssue]]:
                 issues.append(ImportIssue(row_number, "duplicate_player_season", str(key)))
                 continue
             seen.add(key)
-            records.append(SalaryRecord(player_id, season, salary, source_url, checked_at))
+            records.append(SalaryRecord(player_id, season, salary, source_url, checked_at,
+                                        (row.get("reviewer_note") or "").strip()))
     return records, issues
 
 
