@@ -1,0 +1,11 @@
+[project]
+name = "roster-lab-backend"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["fastapi", "uvicorn", "httpx", "sqlalchemy", "ortools"]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
