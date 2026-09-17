@@ -9,6 +9,20 @@ from .domain import Player, PlayerSnapshot
 BASE = "https://statsapi.mlb.com/api/v1"
 
 
+def _as_float(value: object, default: float = 0.0) -> float:
+    try:
+        return float(str(value).replace(",", ""))
+    except (TypeError, ValueError):
+        return default
+
+
+def _as_int(value: object, default: int = 0) -> int:
+    try:
+        return int(float(str(value).replace(",", "")))
+    except (TypeError, ValueError):
+        return default
+
+
 def _get_json(client: httpx.Client, url: str, params: dict) -> dict:
     for attempt in range(3):
         try:
@@ -68,14 +82,14 @@ def fetch_player_snapshot(season: int, client: httpx.Client, *, fetched_at: date
                 else:
                     position = row.get("position", {}).get("abbreviation", "")
                     player.fielding.setdefault(prior_season, []).append({"position": position, "stat": stat})
-                    if position and int(stat.get("gamesStarted", 0) or 0) >= 5:
+                    if position and _as_int(stat.get("gamesStarted", 0)) >= 5:
                         player.eligible_positions.add(position)
     for player in players.values():
-        recent_hitting_pa = sum(float(str(stat.get("plateAppearances", 0) or 0).replace(",", ""))
+        recent_hitting_pa = sum(_as_float(stat.get("plateAppearances", 0))
                                 for stat in player.hitting.values())
-        recent_pitching_ip = sum(float(str(stat.get("inningsPitched", 0) or 0).replace(",", ""))
+        recent_pitching_ip = sum(_as_float(stat.get("inningsPitched", 0))
                                  for stat in player.pitching.values())
-        recent_fielding_starts = sum(int(stat.get("gamesStarted", 0) or 0)
+        recent_fielding_starts = sum(_as_int(stat.get("gamesStarted", 0))
                                      for rows in player.fielding.values() for row in rows
                                      for stat in [row.get("stat", {})])
         if recent_hitting_pa >= 60 and recent_pitching_ip >= 20 and recent_fielding_starts >= 20:

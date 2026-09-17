@@ -25,8 +25,8 @@ DEFAULT_DB = Path(__file__).resolve().parents[2] / "data" / "roster.db"
 class ScenarioRequest(BaseModel):
     season: int = Field(ge=1900, le=2100)
     cap_usd: int = Field(gt=0, le=MAX_SALARY_USD)
-    locked_ids: list[int] = []
-    excluded_ids: list[int] = []
+    locked_ids: list[int] = Field(default_factory=list)
+    excluded_ids: list[int] = Field(default_factory=list)
 
 
 def _candidates(snapshot, salaries):
