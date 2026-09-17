@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
-from app.main import create_app
+from app.demo import demo_data
+from app.main import _candidates, create_app
 
 
 def test_demo_scenario_is_saved_and_reopened(tmp_path):
@@ -43,3 +44,24 @@ def test_salary_csv_import_reports_invalid_rows(tmp_path):
     assert response.status_code == 200
     assert response.json()["accepted"] == 1
     assert response.json()["issues"][0]["code"] == "missing_source"
+
+
+def test_demo_starters_do_not_fill_bullpen_roles():
+    snapshot, salaries = demo_data()
+    candidates, _ = _candidates(snapshot, salaries)
+    starter = next(candidate for candidate in candidates if candidate.name == "Demo SP 1")
+    reliever = next(candidate for candidate in candidates if candidate.name == "Demo RP 1")
+    assert "SP" in starter.eligible_positions
+    assert "RP" not in starter.eligible_positions
+    assert "RP" in reliever.eligible_positions
+    assert "SP" not in reliever.eligible_positions
+
+
+def test_salary_template_lists_player_ids_and_names(tmp_path):
+    client = TestClient(create_app(tmp_path / "test.db"))
+    client.post("/api/demo/seed")
+    response = client.get("/api/salaries/template?season=2026")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/csv")
+    assert "player_id,player_name,season,base_salary_usd,source_url,checked_at" in response.text
+    assert "Demo C 1" in response.text

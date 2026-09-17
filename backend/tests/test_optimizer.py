@@ -60,3 +60,11 @@ def test_demo_pool_reaches_proven_optimum():
     candidates, _ = _candidates(snapshot, salaries)
     result = optimize_roster(candidates, RosterRules(), 150_000_000)
     assert result.status == "optimal"
+
+
+def test_validator_catches_wrong_position_assignment():
+    rules = RosterRules(slots=("C",), require_bench_catcher=False)
+    candidate = Candidate(1, "Catcher", "A", 1_000_000, 1.0, {"C"})
+    result = optimize_roster([candidate], rules, 2_000_000)
+    result.picks[0] = result.picks[0].__class__(1, "Catcher", "A", "1B", 1_000_000, 1.0, False)
+    assert "Player 1 is not eligible for 1B" in validate_roster(result, rules, 2_000_000, [candidate])

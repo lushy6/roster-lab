@@ -123,7 +123,7 @@ def _solve(players: list[Candidate], rules: RosterRules, cap_usd: int | None,
         picks.append(Pick(player.id, player.name, player.team, slot, player.salary, player.war, player.is_two_way))
     result = RosterResult("optimal" if status == cp_model.OPTIMAL else "feasible", picks,
                           sum(p.salary for p in picks), round(sum(p.war for p in picks), 3))
-    problems = validate_roster(result, rules, cap_usd)
+    problems = validate_roster(result, rules, cap_usd, players, locked_ids, excluded_ids)
     if problems:
         raise RuntimeError("Solver returned invalid roster: " + "; ".join(problems))
     return result
@@ -138,13 +138,15 @@ def optimize_roster(players: list[Candidate], rules: RosterRules, cap_usd: int,
     result = _solve(players, rules, cap_usd, locked_ids, excluded_ids)
     if result.status == "infeasible" and result.reason == "No roster satisfies these constraints":
         cheapest = _solve(players, rules, None, locked_ids, excluded_ids, minimize_cost=True)
-        if cheapest.status in {"optimal", "feasible"}:
+        if cheapest.status == "optimal":
             result.minimum_feasible_salary = cheapest.total_salary
             result.reason = f"Cap is below the cheapest valid roster (${cheapest.total_salary:,})"
     return result
 
 
-def validate_roster(result: RosterResult, rules: RosterRules, cap_usd: int | None) -> list[str]:
+def validate_roster(result: RosterResult, rules: RosterRules, cap_usd: int | None,
+                    candidates: list[Candidate] | None = None, locked_ids: set[int] | None = None,
+                    excluded_ids: set[int] | None = None) -> list[str]:
     if result.status == "infeasible":
         return []
     errors = []
@@ -156,4 +158,19 @@ def validate_roster(result: RosterResult, rules: RosterRules, cap_usd: int | Non
         errors.append("Roster exceeds salary cap")
     if sum(p.salary for p in result.picks) != result.total_salary:
         errors.append("Salary total is incorrect")
+    if round(sum(p.war for p in result.picks), 3) != result.total_war:
+        errors.append("Value total is incorrect")
+    if candidates is not None:
+        by_id = {candidate.id: candidate for candidate in candidates}
+        for pick in result.picks:
+            candidate = by_id.get(pick.player_id)
+            if candidate is None or not _eligible(candidate, pick.slot):
+                errors.append(f"Player {pick.player_id} is not eligible for {pick.slot}")
+            elif pick.salary != candidate.salary or pick.war != candidate.war:
+                errors.append(f"Player {pick.player_id} has incorrect salary or value")
+    chosen = {pick.player_id for pick in result.picks}
+    if locked_ids and not locked_ids.issubset(chosen):
+        errors.append("A locked player is missing")
+    if excluded_ids and excluded_ids & chosen:
+        errors.append("An excluded player is selected")
     return errors

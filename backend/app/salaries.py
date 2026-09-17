@@ -16,6 +16,8 @@ def load_salary_csv(path: Path) -> tuple[list[SalaryRecord], list[ImportIssue]]:
         if not required.issubset(reader.fieldnames or []):
             raise ValueError(f"Salary CSV requires columns: {', '.join(sorted(required))}")
         for row_number, row in enumerate(reader, start=2):
+            if not (row["base_salary_usd"] or "").strip():
+                continue
             try:
                 player_id = int(row["player_id"])
                 season = int(row["season"])

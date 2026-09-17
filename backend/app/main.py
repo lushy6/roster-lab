@@ -1,9 +1,11 @@
 from dataclasses import asdict
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+import csv
+import io
 import os
 
-from fastapi import Body, FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
 from pydantic import BaseModel, Field
@@ -42,9 +44,9 @@ def _candidates(snapshot, salaries):
             recent = list(player.pitching.values())
             starts = sum(int(stat.get("gamesStarted", 0) or 0) for stat in recent)
             games = sum(int(stat.get("gamesPlayed", 0) or 0) for stat in recent)
-            if starts or not games:
+            if starts >= 5 or not games:
                 positions.add("SP")
-            if games > starts or not games:
+            if not games or starts / games < 0.5:
                 positions.add("RP")
         if player.is_two_way:
             positions.add("DH")
@@ -108,6 +110,23 @@ def create_app(db_path: Path = DEFAULT_DB) -> FastAPI:
         identifier = save_salaries(db_path, season, accepted)
         return {"salary_id": identifier, "accepted": len(accepted), "issues": [asdict(issue) for issue in issues]}
 
+    @app.get("/api/salaries/template")
+    def salary_template(season: int = 2026):
+        snapshot_entry = latest_snapshot(db_path, season)
+        if not snapshot_entry:
+            raise HTTPException(404, detail={"code": "missing_players", "message": "Refresh players first"})
+        salary_entry = latest_salaries(db_path, season)
+        by_id = {record.player_id: record for record in salary_entry[1]} if salary_entry else {}
+        buffer = io.StringIO(newline="")
+        writer = csv.writer(buffer)
+        writer.writerow(["player_id", "player_name", "season", "base_salary_usd", "source_url", "checked_at"])
+        for player in sorted(snapshot_entry[1].players.values(), key=lambda p: p.name):
+            record = by_id.get(player.id)
+            writer.writerow([player.id, player.name, season, record.base_salary_usd if record else "",
+                             record.source_url if record else "", record.checked_at.isoformat() if record else ""])
+        return Response(buffer.getvalue(), media_type="text/csv",
+                        headers={"Content-Disposition": f'attachment; filename="salary-template-{season}.csv"'})
+
     @app.get("/api/coverage")
     def coverage(season: int = 2026):
         snapshot = latest_snapshot(db_path, season)
@@ -147,11 +166,10 @@ def create_app(db_path: Path = DEFAULT_DB) -> FastAPI:
             pick["salary_source_url"] = salary_record.source_url
             pick["salary_checked_at"] = salary_record.checked_at.isoformat()
         alternatives = []
-        selected_ids = {pick.player_id for pick in result.picks}
         for alt_cap in (round(request.cap_usd * 0.9), round(request.cap_usd * 1.1)):
             alt = optimize_roster(candidates, RosterRules(), alt_cap,
                                   set(request.locked_ids), set(request.excluded_ids))
-            if alt.status != "infeasible" and {pick.player_id for pick in alt.picks} != selected_ids:
+            if alt.status != "infeasible":
                 alternatives.append({"cap_usd": alt_cap, "roster": asdict(alt)})
         payload = {"season": request.season, "cap_usd": request.cap_usd, "locked_ids": request.locked_ids,
                    "excluded_ids": request.excluded_ids, "roster": roster, "alternatives": alternatives,
