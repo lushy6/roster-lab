@@ -44,3 +44,14 @@ class PlayerSnapshot:
     source_urls: list[str]
     players: dict[int, Player]
     adapter_version: str = "mlb-v1"
+
+
+@dataclass(frozen=True)
+class ValueProjection:
+    player_id: int
+    estimated_war: float
+    hitting_war: float
+    pitching_war: float
+    uncertainty: str
+    input_seasons: list[int]
+    model_version: str = "war-proxy-v1"
