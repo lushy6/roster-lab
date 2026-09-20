@@ -34,11 +34,15 @@ TEAM_ABBREV = {
 }
 
 def _headshot_url(pid: int) -> str:
-    return f"https://img.mlbstatic.com/mlb-photos/image/crop/213x320/{pid}.jpg"
+    # verified 200 for 660271, 669127 at 60x60@2x; larger crops require hash and 400 on direct ID — use content CDN
+    return f"https://content.mlb.com/images/headshots/current/60x60/{pid}@2x.png"
 
 def _team_logo_url(team: str) -> str:
     abbr = TEAM_ABBREV.get(team, "MLB")
-    return f"https://www.mlbstatic.com/team-logos/{abbr.lower()}.svg" if abbr != "MLB" else "https://www.mlbstatic.com/mlb.com/images/mlb-logo-white.png"
+    if abbr == "MLB":
+        return "https://www.mlbstatic.com/team-logos/league-on-dark/1.svg"
+    # ESPN CDN verified 200 for lad, ath, etc.
+    return f"https://a3.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fmlb%2F500%2F{abbr.lower()}.png&h=40&w=40"
 
 def _stats_for_pick(player, season: int) -> dict:
     hitting = player.hitting.get(season - 1) or player.hitting.get(season - 2) or {}
