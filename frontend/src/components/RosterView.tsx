@@ -1,9 +1,9 @@
 import type { Pick, Scenario } from '../api'
+import LineupGraphic from './LineupGraphic'
 
 const money = (value: number) => `$${(value / 1_000_000).toFixed(1)}m`
 const warPerMillion = (war: number, salary: number) => salary > 0 ? (war / (salary / 1_000_000)).toFixed(2) : '—'
 const groups = [
-  { title: 'Starting lineup', test: (slot: string) => !slot.startsWith('SP') && !slot.startsWith('RP') && !slot.startsWith('BN') && slot !== 'C2' },
   { title: 'Bench', test: (slot: string) => slot.startsWith('BN') || slot === 'C2' },
   { title: 'Rotation', test: (slot: string) => slot.startsWith('SP') },
   { title: 'Bullpen', test: (slot: string) => slot.startsWith('RP') },
@@ -11,12 +11,14 @@ const groups = [
 
 function PlayerRow({ pick, index }: { pick: Pick; index: number }) {
   const uncColor = pick.uncertainty === 'high' ? '#c4363f' : pick.uncertainty === 'medium' ? '#b07a00' : '#5f7683'
+  const s = pick.stats || {}
+  const statText = s.era ? `${s.era} ERA · ${s.ip} IP` : s.ops ? `${s.avg ? Number(s.avg).toFixed(3).replace(/^0/,'') : '—'} · ${s.ops ? Number(s.ops).toFixed(3) : '—'} OPS · ${s.hr ?? '—'} HR` : ''
   return (
     <div className="player-row" data-testid="roster-player" style={{ animationDelay: `${index * 28}ms` }}>
       <span className="slot">{pick.slot}</span>
       <div className="player-name">
         <strong>{pick.name} <span className="eff-badge" title="WAR per $1M">{warPerMillion(pick.war, pick.salary)}/$1M</span></strong>
-        <small>{pick.team} · {pick.input_seasons.join('–') || 'limited history'} · <span className="unc-dot" style={{ background: uncColor }} />{pick.uncertainty}</small>
+        <small>{pick.team_abbrev || pick.team} · {statText} {statText ? '·' : ''} {pick.input_seasons.join('–') || 'limited'} · <span className="unc-dot" style={{ background: uncColor }} />{pick.uncertainty}</small>
       </div>
       <span className="player-war" title={`Hitting ${pick.hitting_war.toFixed(1)} + Pitching ${pick.pitching_war.toFixed(1)}`}>{pick.war.toFixed(1)} <small>est. WAR</small></span>
       <span className="player-salary">{money(pick.salary)}</span>
@@ -64,10 +66,11 @@ export default function RosterView({ scenario }: { scenario: Scenario }) {
         <div className="payroll-gauge-track"><div className="payroll-gauge-fill" style={{ width: `${pct}%`, background: gaugeColor }} /></div>
         <span style={{ color: gaugeColor }}>{pct}% cap · {money(scenario.cap_usd - roster.total_salary)} remaining</span>
       </div>
+      <LineupGraphic picks={roster.picks} />
       <div className="roster-groups">
         {groups.map(group => (
           <div className="roster-group" key={group.title}>
-            <h3>{group.title}</h3>
+            <h3>{group.title} <small style={{ fontFamily: 'DM Sans', fontWeight: 500, color: '#6b8794', marginLeft: 6 }}>{roster.picks.filter(p=>group.test(p.slot)).length} players</small></h3>
             <div className="player-list">
               {roster.picks.filter(p => group.test(p.slot)).map(pick => <PlayerRow pick={pick} key={pick.slot} index={idx++} />)}
             </div>

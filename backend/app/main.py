@@ -22,6 +22,40 @@ from .value import project_values
 DEFAULT_DB = Path(__file__).resolve().parents[2] / "data" / "roster.db"
 
 
+TEAM_ABBREV = {
+    "Arizona Diamondbacks": "ARI", "Atlanta Braves": "ATL", "Baltimore Orioles": "BAL", "Boston Red Sox": "BOS",
+    "Chicago Cubs": "CHC", "Chicago White Sox": "CWS", "Cincinnati Reds": "CIN", "Cleveland Guardians": "CLE",
+    "Colorado Rockies": "COL", "Detroit Tigers": "DET", "Houston Astros": "HOU", "Kansas City Royals": "KC",
+    "Los Angeles Angels": "LAA", "Los Angeles Dodgers": "LAD", "Miami Marlins": "MIA", "Milwaukee Brewers": "MIL",
+    "Minnesota Twins": "MIN", "New York Mets": "NYM", "New York Yankees": "NYY", "Oakland Athletics": "ATH",
+    "Athletics": "ATH", "Philadelphia Phillies": "PHI", "Pittsburgh Pirates": "PIT", "San Diego Padres": "SD",
+    "San Francisco Giants": "SF", "Seattle Mariners": "SEA", "St. Louis Cardinals": "STL", "Tampa Bay Rays": "TB",
+    "Texas Rangers": "TEX", "Toronto Blue Jays": "TOR", "Washington Nationals": "WSH", "Fictional club": "FIC",
+}
+
+def _headshot_url(pid: int) -> str:
+    return f"https://img.mlbstatic.com/mlb-photos/image/crop/213x320/{pid}.jpg"
+
+def _team_logo_url(team: str) -> str:
+    abbr = TEAM_ABBREV.get(team, "MLB")
+    return f"https://www.mlbstatic.com/team-logos/{abbr.lower()}.svg" if abbr != "MLB" else "https://www.mlbstatic.com/mlb.com/images/mlb-logo-white.png"
+
+def _stats_for_pick(player, season: int) -> dict:
+    hitting = player.hitting.get(season - 1) or player.hitting.get(season - 2) or {}
+    pitching = player.pitching.get(season - 1) or player.pitching.get(season - 2) or {}
+    return {
+        "ops": hitting.get("ops"),
+        "avg": hitting.get("avg"),
+        "hr": hitting.get("homeRuns"),
+        "rbi": hitting.get("rbi"),
+        "pa": hitting.get("plateAppearances"),
+        "era": pitching.get("era"),
+        "ip": pitching.get("inningsPitched"),
+        "so": pitching.get("strikeOuts"),
+        "whip": pitching.get("whip"),
+    }
+
+
 def _numeric(value: object) -> float:
     try:
         return float(str(value).replace(",", ""))
@@ -154,16 +188,21 @@ def create_app(db_path: Path = DEFAULT_DB) -> FastAPI:
                 continue
             salary = salary_by_id.get(player.id)
             value = values.get(player.id)
+            stats = _stats_for_pick(player, season)
             candidates.append({
                 "id": player.id,
                 "name": player.name,
                 "team": player.team,
+                "team_abbrev": TEAM_ABBREV.get(player.team, "MLB"),
                 "primary_position": player.primary_position,
                 "eligible_positions": sorted(player.eligible_positions),
                 "is_priced": salary is not None,
                 "salary": salary.base_salary_usd if salary else None,
                 "war": round(value.estimated_war, 2) if value else 0,
                 "uncertainty": value.uncertainty if value else "high",
+                "headshot_url": _headshot_url(player.id),
+                "team_logo_url": _team_logo_url(player.team),
+                "stats": stats,
             })
         candidates.sort(key=lambda x: (0 if x["is_priced"] else 1, -x["war"], x["name"]))
         return candidates[:limit]
@@ -207,6 +246,8 @@ def create_app(db_path: Path = DEFAULT_DB) -> FastAPI:
         for pick in roster["picks"]:
             value = values[pick["player_id"]]
             salary_record = salary_by_id[pick["player_id"]]
+            player = snapshot.players[pick["player_id"]]
+            stats = _stats_for_pick(player, request.season)
             pick["uncertainty"] = value.uncertainty
             pick["input_seasons"] = value.input_seasons
             pick["hitting_war"] = value.hitting_war
@@ -214,6 +255,10 @@ def create_app(db_path: Path = DEFAULT_DB) -> FastAPI:
             pick["salary_source_url"] = salary_record.source_url
             pick["salary_checked_at"] = salary_record.checked_at.isoformat()
             pick["salary_reviewer_note"] = salary_record.reviewer_note
+            pick["headshot_url"] = _headshot_url(player.id)
+            pick["team_logo_url"] = _team_logo_url(player.team)
+            pick["team_abbrev"] = TEAM_ABBREV.get(player.team, "MLB")
+            pick["stats"] = stats
         alternatives = []
         primary_ids = {pick["player_id"] for pick in roster["picks"]}
         locked_ids = set(request.locked_ids)
