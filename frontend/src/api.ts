@@ -12,6 +12,8 @@ async function parse<T>(response: Response): Promise<T> {
   return body as T
 }
 
+export type PlayerSearch = { id: number; name: string; team: string; primary_position: string; eligible_positions: string[]; is_priced: boolean; salary: number | null; war: number; uncertainty: string }
+
 export const getStatus = (season: number) => fetch(`${API}/api/status?season=${season}`).then(parse<Status>)
 export const seedDemo = () => fetch(`${API}/api/demo/seed`, { method: 'POST' }).then(parse<{ players: number }>)
 export const refreshMlb = (season: number) => fetch(`${API}/api/refresh/mlb?season=${season}`, { method: 'POST' }).then(parse<{ players: number }>)
@@ -19,3 +21,4 @@ export const importSalaries = (season: number, csv: string) => fetch(`${API}/api
 export const buildScenario = (season: number, capUsd: number, lockedIds: number[], excludedIds: number[]) => fetch(`${API}/api/scenarios`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ season, cap_usd: capUsd, locked_ids: lockedIds, excluded_ids: excludedIds }) }).then(parse<Scenario>)
 export const listScenarios = (season: number) => fetch(`${API}/api/scenarios?season=${season}`).then(parse<SavedScenario[]>)
 export const getScenario = (id: string) => fetch(`${API}/api/scenarios/${id}`).then(parse<Scenario>)
+export const searchPlayers = (season: number, q: string, limit = 12) => fetch(`${API}/api/players?season=${season}&q=${encodeURIComponent(q)}&limit=${limit}`).then(parse<PlayerSearch[]>)

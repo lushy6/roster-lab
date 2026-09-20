@@ -137,6 +137,37 @@ def create_app(db_path: Path = DEFAULT_DB) -> FastAPI:
         return Response(buffer.getvalue(), media_type="text/csv",
                         headers={"Content-Disposition": f'attachment; filename="salary-template-{season}.csv"'})
 
+    @app.get("/api/players")
+    def players(season: int = 2026, q: str = "", limit: int = 12):
+        snapshot_entry = latest_snapshot(db_path, season)
+        if not snapshot_entry:
+            raise HTTPException(404, detail={"code": "missing_players", "message": "Refresh players first"})
+        _, snapshot, _ = snapshot_entry
+        salary_entry = latest_salaries(db_path, season)
+        salary_by_id = {r.player_id: r for r in salary_entry[1]} if salary_entry else {}
+        values = project_values(snapshot, season)
+        query = q.strip().lower()
+        limit = max(1, min(50, limit))
+        candidates = []
+        for player in snapshot.players.values():
+            if query and query not in player.name.lower() and query not in player.team.lower() and query not in str(player.id):
+                continue
+            salary = salary_by_id.get(player.id)
+            value = values.get(player.id)
+            candidates.append({
+                "id": player.id,
+                "name": player.name,
+                "team": player.team,
+                "primary_position": player.primary_position,
+                "eligible_positions": sorted(player.eligible_positions),
+                "is_priced": salary is not None,
+                "salary": salary.base_salary_usd if salary else None,
+                "war": round(value.estimated_war, 2) if value else 0,
+                "uncertainty": value.uncertainty if value else "high",
+            })
+        candidates.sort(key=lambda x: (0 if x["is_priced"] else 1, -x["war"], x["name"]))
+        return candidates[:limit]
+
     @app.get("/api/coverage")
     def coverage(season: int = 2026):
         snapshot = latest_snapshot(db_path, season)
@@ -144,8 +175,13 @@ def create_app(db_path: Path = DEFAULT_DB) -> FastAPI:
         if not snapshot or not salary:
             raise HTTPException(404, detail={"code": "missing_data", "message": "Refresh players and import salaries first"})
         result = salary_coverage(set(snapshot[1].players), salary[1], season)
+        missing = []
+        for pid in result.missing_player_ids[:200]:
+            player = snapshot[1].players.get(pid)
+            if player:
+                missing.append({"id": player.id, "name": player.name, "team": player.team, "primary_position": player.primary_position})
         return {"priced_count": result.priced_count, "total_players": len(snapshot[1].players),
-                "missing_player_ids": result.missing_player_ids}
+                "missing_player_ids": result.missing_player_ids, "missing_players": missing}
 
     @app.post("/api/scenarios")
     def create_scenario(request: ScenarioRequest):
