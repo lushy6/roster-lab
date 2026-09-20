@@ -37,10 +37,12 @@ def _headshot_url(pid: int) -> str:
     # verified 200 for 660271, 669127 at 60x60@2x; larger crops require hash and 400 on direct ID — use content CDN
     return f"https://content.mlb.com/images/headshots/current/60x60/{pid}@2x.png"
 
-def _team_logo_url(team: str) -> str:
+def _team_logo_url(team: str) -> str | None:
+    if not team or not team.strip():
+        return None
     abbr = TEAM_ABBREV.get(team, "MLB")
     if abbr == "MLB":
-        return "https://www.mlbstatic.com/team-logos/league-on-dark/1.svg"
+        return None
     # ESPN CDN verified 200 for lad, ath, etc.
     return f"https://a3.espncdn.com/combiner/i?img=%2Fi%2Fteamlogos%2Fmlb%2F500%2F{abbr.lower()}.png&h=40&w=40"
 
@@ -193,11 +195,12 @@ def create_app(db_path: Path = DEFAULT_DB) -> FastAPI:
             salary = salary_by_id.get(player.id)
             value = values.get(player.id)
             stats = _stats_for_pick(player, season)
+            team_abbrev = TEAM_ABBREV.get(player.team, "FA") if player.team else "FA"
             candidates.append({
                 "id": player.id,
                 "name": player.name,
-                "team": player.team,
-                "team_abbrev": TEAM_ABBREV.get(player.team, "MLB"),
+                "team": player.team or "Free Agent",
+                "team_abbrev": team_abbrev,
                 "primary_position": player.primary_position,
                 "eligible_positions": sorted(player.eligible_positions),
                 "is_priced": salary is not None,
@@ -261,7 +264,9 @@ def create_app(db_path: Path = DEFAULT_DB) -> FastAPI:
             pick["salary_reviewer_note"] = salary_record.reviewer_note
             pick["headshot_url"] = _headshot_url(player.id)
             pick["team_logo_url"] = _team_logo_url(player.team)
-            pick["team_abbrev"] = TEAM_ABBREV.get(player.team, "MLB")
+            pick["team_abbrev"] = TEAM_ABBREV.get(player.team, "FA") if player.team else "FA"
+            if not player.team:
+                pick["team"] = "Free Agent"
             pick["stats"] = stats
         alternatives = []
         primary_ids = {pick["player_id"] for pick in roster["picks"]}
