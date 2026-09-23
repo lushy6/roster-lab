@@ -259,7 +259,7 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         salary = latest_salaries(db_path, season)  # before any import, everyone is simply unpriced
         result = salary_coverage(set(snapshot[1].players), salary[1] if salary else [], season)
         missing = []
-        for pid in result.missing_player_ids[:200]:
+        for pid in result.missing_player_ids:
             player = snapshot[1].players.get(pid)
             if player:
                 missing.append({"id": player.id, "name": player.name, "team": player.team, "primary_position": player.primary_position})

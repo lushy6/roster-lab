@@ -54,17 +54,28 @@ def _stats(client: httpx.Client, season: int, group: str, urls: list[str]) -> li
     return result
 
 
+def _team_names(client: httpx.Client, season: int, urls: list[str]) -> dict[int, str]:
+    """The players endpoint returns only {id, link} as currentTeam for most players, so names come from here."""
+    url = f"{BASE}/teams"
+    params = {"sportId": 1, "season": season}
+    payload = _get_json(client, url, params)
+    urls.append(str(httpx.URL(url, params=params)))
+    return {team["id"]: team["name"] for team in payload.get("teams", []) if "id" in team and team.get("name")}
+
+
 def fetch_player_snapshot(season: int, client: httpx.Client, *, fetched_at: datetime | None = None) -> PlayerSnapshot:
     fetched_at = fetched_at or datetime.now(timezone.utc)
     url = f"{BASE}/sports/1/players"
     params = {"season": season}
     payload = _get_json(client, url, params)
     urls = [str(httpx.URL(url, params=params))]
+    team_names = _team_names(client, season, urls)
     players: dict[int, Player] = {}
     for raw in payload.get("people", []):
         position = raw.get("primaryPosition", {}).get("abbreviation", "")
+        current = raw.get("currentTeam") or {}
         players[raw["id"]] = Player(
-            id=raw["id"], name=raw["fullName"], team=raw.get("currentTeam", {}).get("name", ""),
+            id=raw["id"], name=raw["fullName"], team=current.get("name") or team_names.get(current.get("id"), ""),
             primary_position=position, eligible_positions={position} if position else set(),
             is_two_way=position == "TWP",
         )

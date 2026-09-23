@@ -184,3 +184,11 @@ def test_coverage_before_any_salary_import_reports_everyone_missing(tmp_path):
 def test_coverage_without_any_player_data_is_still_a_clear_404(tmp_path):
     response = TestClient(create_app(tmp_path / "test.db")).get("/api/coverage?season=2026")
     assert response.status_code == 404 and response.json()["detail"]["code"] == "missing_players"
+
+
+def test_coverage_lists_every_missing_player_not_just_the_first_200(tmp_path):
+    db = tmp_path / "test.db"
+    players = {i: Player(i, f"Live {i}", "Club", "1B", {"1B"}) for i in range(1, 251)}
+    save_snapshot(db, PlayerSnapshot(2026, datetime.now(timezone.utc), [], players))
+    body = TestClient(create_app(db)).get("/api/coverage?season=2026").json()
+    assert len(body["missing_player_ids"]) == 250 and len(body["missing_players"]) == 250
