@@ -15,7 +15,7 @@ from .demo import demo_data
 from .mlb import fetch_player_snapshot
 from .optimizer import Candidate, RosterRules, optimize_roster
 from .salaries import MAX_SALARY_USD, load_salary_csv, salary_coverage
-from .storage import (LiveDataPresent, delete_demo, get_scenario, latest_salaries, latest_snapshot, list_scenarios,
+from .storage import (LiveDataPresent, VersionGone, delete_demo, get_scenario, latest_salaries, latest_snapshot, list_scenarios,
                       save_demo, save_salaries, save_scenario, save_snapshot, seasons_with_data)
 from .domain import SalaryRecord
 from .value import MODEL_VERSION, project_values
@@ -332,7 +332,11 @@ def create_app(db_path: Path | None = None) -> FastAPI:
                                        "missing_player_ids": coverage.missing_player_ids},
                    "salary_sources": sorted({record.source_url for record in salaries
                                              if record.player_id in {pick.player_id for pick in result.picks}})}
-        identifier = save_scenario(db_path, request.season, snapshot_id, salary_id, payload)
+        try:
+            identifier = save_scenario(db_path, request.season, snapshot_id, salary_id, payload)
+        except VersionGone:
+            raise HTTPException(409, detail={"code": "data_changed",
+                                             "message": "Player or salary data changed while building. Build again."}) from None
         return dict(payload, id=identifier, snapshot_id=snapshot_id, salary_id=salary_id)
 
     @app.get("/api/scenarios")

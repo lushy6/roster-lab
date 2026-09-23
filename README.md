@@ -33,7 +33,7 @@ The optimizer maximizes **slot-weighted** WAR under the payroll limit. Lineup, r
 
 Position eligibility can still put a bench player above a weaker starter: the best remaining hitter may simply not be able to play the scarce position.
 
-If the solver runs out of time (15 seconds per solve) before finding any roster, the API returns 503 `solver_timeout`. That is different from a payroll limit that is genuinely too low, which returns 422 with the cheapest valid payroll.
+If the solver runs out of time (15 seconds per solve) before finding any roster, the API returns 503 `solver_timeout`. That is different from a payroll limit that is genuinely too low, which returns 422 with the cheapest valid payroll. If player or salary data is replaced and pruned while a build is solving (for example by a refresh in another tab), the build returns 409 `data_changed` instead of saving a scenario that points at data that no longer exists; build again.
 
 ## Preview tabs
 

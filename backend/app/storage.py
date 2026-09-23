@@ -21,6 +21,10 @@ class LiveDataPresent(Exception):
     """Raised when demo data would hide live player data."""
 
 
+class VersionGone(Exception):
+    """Raised when a scenario's snapshot or salary version was replaced and pruned mid-build."""
+
+
 def _connect(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(path)
@@ -159,8 +163,16 @@ def latest_salaries(path: Path, season: int) -> tuple[str, list[SalaryRecord], b
 
 
 def save_scenario(path: Path, season: int, snapshot_id: str, salary_id: str, payload: dict) -> str:
+    """Save a scenario, refusing if its snapshot or salary version was pruned while it was being solved.
+
+    The existence check and the insert share one write-locked transaction, so no prune can run between them;
+    once saved, the scenario itself pins both versions."""
     identifier = str(uuid4())
     with _session(path) as db:
+        db.execute("BEGIN IMMEDIATE")
+        if (db.execute("SELECT 1 FROM snapshots WHERE id=?", (snapshot_id,)).fetchone() is None
+                or db.execute("SELECT 1 FROM salaries WHERE id=?", (salary_id,)).fetchone() is None):
+            raise VersionGone()
         db.execute("INSERT INTO scenarios VALUES (?, ?, ?, ?, ?, ?)",
                    (identifier, season, datetime.now().isoformat(), snapshot_id, salary_id, json.dumps(payload)))
     return identifier

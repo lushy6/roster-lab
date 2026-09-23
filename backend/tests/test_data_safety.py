@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from app import main as app_main
 from app.domain import Player, PlayerSnapshot, SalaryRecord
 from app.main import create_app
-from app.storage import (KEEP_VERSIONS, PINNED_SCENARIOS, LiveDataPresent, latest_salaries, save_demo,
+from app.storage import (KEEP_VERSIONS, PINNED_SCENARIOS, LiveDataPresent, VersionGone, latest_salaries, save_demo,
                          save_salaries, save_scenario, save_snapshot)
 
 
@@ -218,10 +218,11 @@ def test_demo_and_real_rows_are_pruned_independently(tmp_path):
 
 def test_only_recent_scenarios_pin_old_versions(tmp_path):
     db = tmp_path / "test.db"
+    salary_id = save_salaries(db, 2026, [salary(1)])
     snapshot_ids = []
     for _ in range(PINNED_SCENARIOS + 5):
         snapshot_ids.append(save_snapshot(db, live_snapshot()))
-        save_scenario(db, 2026, snapshot_ids[-1], "salary", {"roster": {}})
+        save_scenario(db, 2026, snapshot_ids[-1], salary_id, {"roster": {}})
     save_snapshot(db, live_snapshot())  # one more save to run the prune
     kept = set(ids(db, "snapshots"))
     assert set(snapshot_ids[-PINNED_SCENARIOS:]) <= kept        # what the UI lists stays traceable
@@ -255,3 +256,35 @@ def test_a_live_refresh_only_replaces_demo_data_for_its_own_season(tmp_path, mon
     assert client.post("/api/refresh/mlb?season=2025").status_code == 200
     assert count(db, "snapshots", "is_demo=1 AND season=2026") == 1
     assert client.get("/api/status?season=2026").json()["is_demo"] is True
+
+
+def test_a_scenario_cannot_be_saved_against_a_pruned_version(tmp_path):
+    db = tmp_path / "test.db"
+    snapshot_id, salary_id = seed_live(db)
+    with sqlite3.connect(db) as raw:
+        raw.execute("DELETE FROM snapshots WHERE id=?", (snapshot_id,))
+    try:
+        save_scenario(db, 2026, snapshot_id, salary_id, {"roster": {}})
+    except VersionGone:
+        pass
+    else:
+        raise AssertionError("save_scenario should refuse a snapshot that no longer exists")
+    assert count(db, "scenarios") == 0
+
+
+def test_data_replaced_during_a_build_returns_409_instead_of_a_dangling_scenario(tmp_path, monkeypatch):
+    db = tmp_path / "test.db"
+    client = TestClient(create_app(db))
+    client.post("/api/demo/seed")
+    real_optimize = app_main.optimize_roster
+
+    def optimize_then_lose_the_snapshot(*args, **kwargs):
+        with sqlite3.connect(db) as raw:  # another tab refreshes and prunes while this build solves
+            raw.execute("DELETE FROM snapshots")
+        return real_optimize(*args, **kwargs)
+
+    monkeypatch.setattr(app_main, "optimize_roster", optimize_then_lose_the_snapshot)
+    response = client.post("/api/scenarios", json={"season": 2026, "cap_usd": 150_000_000})
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "data_changed"
+    assert count(db, "scenarios") == 0
