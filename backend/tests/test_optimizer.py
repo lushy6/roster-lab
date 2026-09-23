@@ -156,3 +156,17 @@ def test_solver_scales_to_a_league_sized_pool():
     result = optimize_roster(pool, RosterRules(), 220_000_000)
     assert result.status in {"optimal", "feasible"}
     assert time.perf_counter() - started < 20
+
+
+def test_slot_weights_change_which_players_are_chosen_not_just_the_labels():
+    # Unweighted, B + C (9.0 WAR) beats A + B (8.0). Weighted, C on the bench only counts
+    # 1.5, so paying for A at first base wins (5.0 + 0.25 * 3.0 = 5.75 vs 3.0 + 0.25 * 6.0 = 4.5).
+    players = [Candidate(1, "A", "X", 10_000_000, 5.0, {"1B"}),
+               Candidate(2, "B", "X", 2_000_000, 3.0, {"1B"}),
+               Candidate(3, "C", "X", 10_000_000, 6.0, {"DH"})]
+    slots = ("1B", "BN1")
+    weighted = optimize_roster(players, RosterRules(slots=slots, require_bench_catcher=False), 12_000_000)
+    unweighted = optimize_roster(players, RosterRules(slots=slots, require_bench_catcher=False,
+                                                      slot_weights={}), 12_000_000)
+    assert {pick.player_id for pick in weighted.picks} == {1, 2} and weighted.total_war == 5.75
+    assert {pick.player_id for pick in unweighted.picks} == {2, 3} and unweighted.total_war == 9.0

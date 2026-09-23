@@ -15,9 +15,12 @@ describe('toCsv', () => {
     expect(toCsv([[null, undefined, 'x']])).toBe(',,x')
   })
 
-  it('neutralises spreadsheet formulas in text but leaves real negative numbers alone', () => {
-    expect(toCsv([['=SUM(A1)', '+1', '@cmd', '-2']])).toBe("'=SUM(A1),'+1,'@cmd,'-2")
-    expect(toCsv([[-1.5]])).toBe('-1.5')
+  it('neutralises spreadsheet formulas in text', () => {
+    expect(toCsv([['=SUM(A1)', '@cmd', '-2+3', '+cmd|calc']])).toBe("'=SUM(A1),'@cmd,'-2+3,'+cmd|calc")
+  })
+
+  it('leaves numbers alone, including numbers already formatted as text', () => {
+    expect(toCsv([[-1.5, '-0.50', '+3', '1e3', '.5']])).toBe('-1.5,-0.50,+3,1e3,.5')
   })
 })
 
@@ -37,6 +40,12 @@ describe('rosterToCsv', () => {
   it('exports the slot weight and the WAR that actually counts toward the roster', () => {
     const rows = rosterToCsv([pick({ slot: 'BN1', war: 4, weight: 0.25 })]).split('\r\n')
     expect(rows[1]).toContain(',4.00,0.25,1.00,')
+  })
+
+  it('exports a below-replacement (negative) WAR as a plain number, not as guarded text', () => {
+    const row = rosterToCsv([pick({ war: -0.5, weight: 0.25 })]).split('\r\n')[1]
+    expect(row).toContain(',-0.50,0.25,-0.13,') // -0.5 * 0.25 = -0.125 -> -0.13
+    expect(row).not.toContain("'")
   })
 
   it('treats a saved scenario without weights as full weight', () => {

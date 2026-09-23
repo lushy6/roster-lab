@@ -76,3 +76,37 @@ def test_recent_season_still_outweighs_the_older_one():
 def test_model_version_is_v2_after_the_weighting_change():
     player = Player(10, "One", "Club", "1B", {"1B"}, hitting={2025: {"plateAppearances": 600, "ops": ".800"}})
     assert project_values(snapshot(player), 2026)[10].model_version == "war-proxy-v2"
+
+
+def _war(position: str = "1B", **history):
+    player = Player(1, "P", "Club", position, {position}, **history)
+    return project_values(PlayerSnapshot(2026, datetime.now(timezone.utc), [], {1: player}), 2026)[1]
+
+
+def _pa(pa: int) -> dict:
+    return {"plateAppearances": pa, "ops": ".800"}
+
+
+def test_a_player_who_missed_last_season_is_not_boosted_to_full_weight():
+    missed = _war(hitting={2024: _pa(600)})
+    barely_played = _war(hitting={2024: _pa(600), 2025: _pa(3)})
+    full = _war(hitting={2024: _pa(600), 2025: _pa(600)})
+    assert missed.estimated_war < full.estimated_war * 0.5
+    assert abs(missed.estimated_war - barely_played.estimated_war) < 0.05  # no cliff between "no row" and "3 PA"
+    assert missed.uncertainty != "low"
+
+
+def test_a_zero_playing_time_row_counts_like_no_row():
+    assert _war(hitting={2024: _pa(0), 2025: _pa(600)}).estimated_war == _war(hitting={2025: _pa(600)}).estimated_war
+    assert _war(hitting={2024: _pa(600), 2025: _pa(0)}).estimated_war == _war(hitting={2024: _pa(600)}).estimated_war
+
+
+def test_zero_playing_time_pitching_rows_are_ignored_too():
+    real = {"inningsPitched": "150.0", "era": "3.50"}
+    empty = {"inningsPitched": "0.0", "era": "-.--"}
+    assert (_war("P", pitching={2024: empty, 2025: real}).estimated_war ==
+            _war("P", pitching={2025: real}).estimated_war)
+
+
+def test_input_seasons_leave_out_rows_without_playing_time():
+    assert _war(hitting={2024: _pa(0), 2025: _pa(600)}).input_seasons == [2025]

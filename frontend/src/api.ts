@@ -43,8 +43,17 @@ export const refreshMlb = (season: number) => fetch(`${API}/api/refresh/mlb?seas
 export const importSalaries = (season: number, csv: string, mode: ImportMode = 'merge') =>
   fetch(`${API}/api/salaries/import?season=${season}&mode=${mode}`, { method: 'POST', headers: { 'content-type': 'text/csv' }, body: csv })
     .then(parse<{ accepted: number; total: number; mode: ImportMode; issues: { code: string }[] }>)
+// A build runs up to five solves of at most 15s each on the server; give up a little after that.
+const BUILD_TIMEOUT_MS = 90_000
 export const buildScenario = (season: number, capUsd: number, lockedIds: number[], excludedIds: number[]) =>
-  fetch(`${API}/api/scenarios`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ season, cap_usd: capUsd, locked_ids: lockedIds, excluded_ids: excludedIds }) }).then(parse<Scenario>)
+  fetch(`${API}/api/scenarios`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ season, cap_usd: capUsd, locked_ids: lockedIds, excluded_ids: excludedIds }),
+    signal: AbortSignal.timeout(BUILD_TIMEOUT_MS),
+  }).then(parse<Scenario>).catch(error => {
+    if (error instanceof DOMException && error.name === 'TimeoutError') throw new ApiError('Building the roster took too long. Try again, or loosen the payroll limit.', 0, 'timeout')
+    throw error
+  })
 export const listScenarios = (season: number) => fetch(`${API}/api/scenarios?season=${season}`).then(parse<SavedScenario[]>)
 export const getScenario = (id: string) => fetch(`${API}/api/scenarios/${id}`).then(parse<Scenario>)
 export const getCoverage = (season: number) => fetch(`${API}/api/coverage?season=${season}`).then(parse<Coverage>)

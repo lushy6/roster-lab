@@ -7,7 +7,8 @@ from fastapi.testclient import TestClient
 from app import main as app_main
 from app.domain import Player, PlayerSnapshot, SalaryRecord
 from app.main import create_app
-from app.storage import KEEP_VERSIONS, latest_salaries, save_salaries, save_scenario, save_snapshot
+from app.storage import (KEEP_VERSIONS, PINNED_SCENARIOS, LiveDataPresent, latest_salaries, save_demo,
+                         save_salaries, save_scenario, save_snapshot)
 
 
 def live_snapshot(season: int = 2026, player_id: int = 1) -> PlayerSnapshot:
@@ -192,3 +193,65 @@ def test_coverage_lists_every_missing_player_not_just_the_first_200(tmp_path):
     save_snapshot(db, PlayerSnapshot(2026, datetime.now(timezone.utc), [], players))
     body = TestClient(create_app(db)).get("/api/coverage?season=2026").json()
     assert len(body["missing_player_ids"]) == 250 and len(body["missing_players"]) == 250
+
+
+def ids(db_path, table: str, where: str = "1=1") -> list[str]:
+    with sqlite3.connect(db_path) as db:
+        return [row[0] for row in db.execute(f"SELECT id FROM {table} WHERE {where} ORDER BY rowid")]
+
+
+def test_pruning_keeps_the_newest_versions_not_just_some_of_them(tmp_path):
+    db = tmp_path / "test.db"
+    saved = [save_snapshot(db, live_snapshot()) for _ in range(KEEP_VERSIONS + 3)]
+    assert ids(db, "snapshots") == saved[-KEEP_VERSIONS:]
+
+
+def test_demo_and_real_rows_are_pruned_independently(tmp_path):
+    db = tmp_path / "test.db"
+    real = [save_snapshot(db, live_snapshot()) for _ in range(2)]
+    demo = [save_snapshot(db, live_snapshot(), is_demo=True) for _ in range(3)]
+    assert ids(db, "snapshots", "is_demo=0") == real       # demo saves never touch real rows
+    assert ids(db, "snapshots", "is_demo=1") == demo[-1:]  # and only the newest demo row is kept
+    save_snapshot(db, live_snapshot(season=2025))           # a real save for another season leaves 2026 demo alone
+    assert ids(db, "snapshots", "is_demo=1") == demo[-1:]
+
+
+def test_only_recent_scenarios_pin_old_versions(tmp_path):
+    db = tmp_path / "test.db"
+    snapshot_ids = []
+    for _ in range(PINNED_SCENARIOS + 5):
+        snapshot_ids.append(save_snapshot(db, live_snapshot()))
+        save_scenario(db, 2026, snapshot_ids[-1], "salary", {"roster": {}})
+    save_snapshot(db, live_snapshot())  # one more save to run the prune
+    kept = set(ids(db, "snapshots"))
+    assert set(snapshot_ids[-PINNED_SCENARIOS:]) <= kept        # what the UI lists stays traceable
+    assert not kept & set(snapshot_ids[:5])                     # older scenarios stop pinning full snapshots
+    assert len(kept) <= PINNED_SCENARIOS + KEEP_VERSIONS
+
+
+def test_save_demo_refuses_and_changes_nothing_when_live_data_exists(tmp_path):
+    db = tmp_path / "test.db"
+    seed_live(db)
+    try:
+        save_demo(db, live_snapshot(), [salary(1)])
+    except LiveDataPresent:
+        pass
+    else:
+        raise AssertionError("save_demo should refuse while live data exists")
+    assert count(db, "snapshots", "is_demo=1") == 0 and count(db, "salaries", "is_demo=1") == 0
+
+
+def test_save_demo_stores_salaries_under_the_snapshots_season(tmp_path):
+    db = tmp_path / "test.db"
+    save_demo(db, live_snapshot(season=2025), [salary(1, season=2025)])
+    assert count(db, "salaries", "season=2025 AND is_demo=1") == 1
+
+
+def test_a_live_refresh_only_replaces_demo_data_for_its_own_season(tmp_path, monkeypatch):
+    db = tmp_path / "test.db"
+    client = TestClient(create_app(db))
+    client.post("/api/demo/seed")  # demo lives in 2026
+    monkeypatch.setattr(app_main, "fetch_player_snapshot", lambda season, http: live_snapshot(season))
+    assert client.post("/api/refresh/mlb?season=2025").status_code == 200
+    assert count(db, "snapshots", "is_demo=1 AND season=2026") == 1
+    assert client.get("/api/status?season=2026").json()["is_demo"] is True

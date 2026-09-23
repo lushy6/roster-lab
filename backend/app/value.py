@@ -14,23 +14,27 @@ def _number(value: object, default: float = 0.0) -> float:
         return default
 
 
-def _recent(history: dict[int, dict], target_season: int) -> list[tuple[int, dict]]:
-    return [(year, history[year]) for year in (target_season - 2, target_season - 1) if year in history]
+def _recent(history: dict[int, dict], target_season: int, playing_time_key: str) -> list[tuple[int, dict]]:
+    """The two seasons before the target that have real playing time; an empty row counts as no row."""
+    return [(year, history[year]) for year in (target_season - 2, target_season - 1)
+            if year in history and _number(history[year].get(playing_time_key)) > 0]
 
 
 def _weights(recent: list[tuple[int, dict]], target_season: int) -> dict[int, float]:
-    """0.35 for two seasons back, 0.65 for last season, renormalised over the seasons that exist.
+    """0.35 for two seasons back, 0.65 for last season.
 
-    A player with only one season on file counts that season fully. Weighting the missing
-    year as zero playing time would understate rookies and returning veterans twice over,
-    once in projected playing time and again in how far the rate stat regresses."""
-    raw = {year: 0.35 if year == target_season - 2 else 0.65 for year, _ in recent}
-    total = sum(raw.values())
-    return {year: weight / total for year, weight in raw.items()}
+    Only a player whose sole season is last season (a rookie or a first full year) is
+    weighted fully on it; otherwise the missing older year would understate him twice, in
+    projected playing time and in how far the rate stat regresses. A player who missed last
+    season keeps the 0.35 weight on the older one: full weight would project a full workload
+    for someone with no recent evidence he can play one."""
+    if {year for year, _ in recent} == {target_season - 1}:
+        return {target_season - 1: 1.0}
+    return {year: 0.35 if year == target_season - 2 else 0.65 for year, _ in recent}
 
 
 def _hitting(player: Player, target_season: int) -> tuple[float, float]:
-    recent = _recent(player.hitting, target_season)
+    recent = _recent(player.hitting, target_season, "plateAppearances")
     if not recent or player.primary_position == "P" and not player.is_two_way:
         return 0.0, 0.0
     weight = _weights(recent, target_season)
@@ -49,7 +53,7 @@ def _hitting(player: Player, target_season: int) -> tuple[float, float]:
 
 
 def _pitching(player: Player, target_season: int) -> tuple[float, float]:
-    recent = _recent(player.pitching, target_season)
+    recent = _recent(player.pitching, target_season, "inningsPitched")
     if not recent:
         return 0.0, 0.0
     weight = _weights(recent, target_season)
@@ -69,8 +73,8 @@ def project_values(snapshot: PlayerSnapshot, target_season: int) -> dict[int, Va
     for player in snapshot.players.values():
         hitting_war, pa = _hitting(player, target_season)
         pitching_war, ip = _pitching(player, target_season)
-        years = sorted({year for year, _ in _recent(player.hitting, target_season)} |
-                       {year for year, _ in _recent(player.pitching, target_season)})
+        years = sorted({year for year, _ in _recent(player.hitting, target_season, "plateAppearances")} |
+                       {year for year, _ in _recent(player.pitching, target_season, "inningsPitched")})
         uncertainty = "high" if pa < 100 and ip < 30 else "medium" if pa < 300 and ip < 90 else "low"
         result[player.id] = ValueProjection(player.id, round(hitting_war + pitching_war, 3),
                                             hitting_war, pitching_war, uncertainty, years)

@@ -61,3 +61,35 @@ test('demo mode can be exited, and the season list only offers seasons with data
   await expect(page.getByText('No player data loaded')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Try demo data' })).toBeVisible()
 })
+
+test('the picker is a named combobox, and locks are cleared when their demo data goes away', async ({ page, request }) => {
+  await seedDemo(request)
+  await page.goto('/')
+  const lock = page.getByRole('combobox', { name: 'Lock players', exact: true })
+  await lock.fill('Demo SS 1')
+  await expect(page.getByRole('option', { name: /Demo SS 1/ })).toBeVisible()
+  await lock.press('Enter') // keyboard selection, once the results answer the current query
+  await expect(page.locator('.picker-pill')).toHaveCount(1)
+  await page.getByRole('button', { name: 'Exit demo' }).click()
+  await expect(page.getByText('No player data loaded')).toBeVisible()
+  await expect(page.locator('.picker-pill')).toHaveCount(0)
+})
+
+test('team logos stay a small badge and never cover the player headshot', async ({ page, request }) => {
+  test.setTimeout(90000)
+  // A real 1x1 PNG for every external image, so layout is tested without depending on the network.
+  const pixel = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64')
+  await page.route(/espncdn\.com|content\.mlb\.com|mlbstatic\.com/, route => route.fulfill({ status: 200, contentType: 'image/png', body: pixel }))
+  await seedDemo(request)
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Build roster' }).click()
+  await expect(page.getByRole('heading', { name: 'Your 26-player roster' })).toBeVisible({ timeout: 30000 })
+  const badge = page.locator('.lg-team').first()
+  await expect(badge).toBeVisible()
+  const badgeBox = await badge.boundingBox()
+  expect(badgeBox!.width).toBeLessThanOrEqual(32)
+  expect(badgeBox!.height).toBeLessThanOrEqual(32)
+  const headshot = page.locator('.lg-photo-wrap > img:not(.lg-team)').first()
+  await expect(headshot).toBeVisible()
+  expect((await headshot.boundingBox())!.width).toBeGreaterThan(100)
+})

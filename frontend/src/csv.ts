@@ -4,11 +4,13 @@ type Cell = string | number | null | undefined
 
 // A text cell that starts with one of these is read as a formula by spreadsheet apps.
 const FORMULA_START = /^[=+\-@\t\r]/
+// A plain number such as "-0.50" cannot be a formula, so pre-formatted numeric text is left alone.
+const PLAIN_NUMBER = /^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i
 
 function cell(value: Cell): string {
   if (value == null) return ''
   let text = String(value)
-  if (typeof value === 'string' && FORMULA_START.test(text)) text = `'${text}`
+  if (typeof value === 'string' && FORMULA_START.test(text) && !PLAIN_NUMBER.test(text)) text = `'${text}`
   return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
 }
 

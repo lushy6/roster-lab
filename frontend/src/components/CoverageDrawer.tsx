@@ -14,7 +14,7 @@ export default function CoverageDrawer({ season, coveragePct, priced, total }: {
       .then(result => { if (!cancelled) { setData(result); setError('') } })
       .catch(reason => { if (!cancelled) { setData(null); setError(reason instanceof Error ? reason.message : 'Could not load coverage.') } })
     return () => { cancelled = true }
-  }, [open, season])
+  }, [open, season, priced, total]) // refetch when an import changes the counts while the drawer is open
 
   const needle = q.toLowerCase()
   const filtered = data?.missing_players.filter(p => !needle || p.name.toLowerCase().includes(needle) || p.team.toLowerCase().includes(needle)) ?? []

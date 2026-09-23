@@ -22,7 +22,7 @@ export default function ScenarioForm(p: Props) {
       <div className="form-intro"><span className="field-mark" aria-hidden>◇</span><div><h2>Set the terms</h2><p>Choose a payroll limit. We fill every roster role within it.</p></div></div>
       <div className="field-grid">
         <label>Payroll limit <span className="input-wrap"><span>$</span><input aria-label="Payroll limit" type="number" min="1" step="1" value={p.cap} onChange={event => p.onCap(event.target.value)} /><span>million</span></span></label>
-        <label>Season <select value={p.season} onChange={event => p.onSeason(Number(event.target.value))}>{p.seasons.map(year => <option key={year} value={year}>{year}</option>)}</select></label>
+        <label>Season <select value={p.season} disabled={p.busy} onChange={event => p.onSeason(Number(event.target.value))}>{p.seasons.map(year => <option key={year} value={year}>{year}</option>)}</select></label>
       </div>
       <details className="advanced" open>
         <summary>Player rules</summary>

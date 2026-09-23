@@ -14,6 +14,7 @@ export default function PlayerPicker({ label, placeholder, season, values, onCha
   const [q, setQ] = useState('')
   const [open, setOpen] = useState(false)
   const [results, setResults] = useState<PlayerSearch[]>([])
+  const [resultsFor, setResultsFor] = useState('') // the query the current results answer, so Enter can't pick from an older one
   const [active, setActive] = useState(0)
   // Names of everyone added here, so pills keep reading "Aaron Judge · Team" after the search clears.
   const [labels, setLabels] = useState<Record<number, string>>({})
@@ -24,10 +25,11 @@ export default function PlayerPicker({ label, placeholder, season, values, onCha
   useEffect(() => {
     if (!open || q.trim().length < 1) { setResults([]); return }
     let stale = false // a slow earlier response must not overwrite a newer one
+    const query = q.trim()
     const timer = setTimeout(async () => {
       try {
-        const found = await searchPlayers(season, q.trim(), 8)
-        if (!stale) { setResults(found); setActive(0) }
+        const found = await searchPlayers(season, query, 8)
+        if (!stale) { setResults(found); setResultsFor(query); setActive(0) }
       } catch {
         if (!stale) setResults([])
       }
@@ -68,11 +70,12 @@ export default function PlayerPicker({ label, placeholder, season, values, onCha
             onKeyDown={e => {
               if (e.key === 'ArrowDown') { e.preventDefault(); setActive(a => Math.max(0, Math.min(a + 1, results.length - 1))) }
               else if (e.key === 'ArrowUp') { e.preventDefault(); setActive(a => Math.max(a - 1, 0)) }
-              else if (e.key === 'Enter' && results[active]) { e.preventDefault(); add(results[active]) }
+              else if (e.key === 'Enter' && results[active] && resultsFor === q.trim()) { e.preventDefault(); add(results[active]) }
               else if (e.key === 'Escape') setOpen(false)
             }}
+            aria-label={label}
             aria-expanded={showList}
-            aria-controls={listId}
+            aria-controls={results.length ? listId : undefined}
             aria-activedescendant={showList && results[active] ? optionId(active) : undefined}
             aria-autocomplete="list"
           />
@@ -92,28 +95,32 @@ export default function PlayerPicker({ label, placeholder, season, values, onCha
       )}
 
       {showList && (
-        <div className="picker-popover" role="listbox" id={listId} aria-label={`${label} suggestions`}>
+        <div className="picker-popover">
           {results.length === 0 ? (
             <div className="picker-empty">No players match “{q}”.</div>
-          ) : results.map((p, i) => (
-            <button
-              key={p.id}
-              id={optionId(i)}
-              type="button"
-              role="option"
-              tabIndex={-1}
-              aria-selected={i === active}
-              className={`picker-option ${i === active ? 'is-active' : ''} ${!p.is_priced ? 'is-unpriced' : ''}`}
-              onMouseEnter={() => setActive(i)}
-              onClick={() => add(p)}
-            >
-              <span className="picker-opt-name"><strong>{p.name}</strong><small>{p.team} · {p.primary_position} {p.eligible_positions.join('/')}</small></span>
-              <span className="picker-opt-meta">
-                <em>{p.war.toFixed(1)} WAR</em>
-                <span>{p.is_priced && p.salary ? `$${(p.salary/1_000_000).toFixed(1)}m` : 'no salary'}</span>
-              </span>
-            </button>
-          ))}
+          ) : (
+            <div role="listbox" id={listId} aria-label={`${label} suggestions`}>
+              {results.map((p, i) => (
+                <button
+                  key={p.id}
+                  id={optionId(i)}
+                  type="button"
+                  role="option"
+                  tabIndex={-1}
+                  aria-selected={i === active}
+                  className={`picker-option ${i === active ? 'is-active' : ''} ${!p.is_priced ? 'is-unpriced' : ''}`}
+                  onMouseEnter={() => setActive(i)}
+                  onClick={() => add(p)}
+                >
+                  <span className="picker-opt-name"><strong>{p.name}</strong><small>{p.team} · {p.primary_position} {p.eligible_positions.join('/')}</small></span>
+                  <span className="picker-opt-meta">
+                    <em>{p.war.toFixed(1)} WAR</em>
+                    <span>{p.is_priced && p.salary ? `$${(p.salary/1_000_000).toFixed(1)}m` : 'no salary'}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
           <div className="picker-hint">↑↓ navigate · Enter select · Esc close</div>
         </div>
       )}

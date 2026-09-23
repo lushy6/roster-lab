@@ -368,7 +368,7 @@ a { color: inherit; }
 }
 .tabular-nums { font-variant-numeric: tabular-nums; }
 .lg-photo-wrap { position: relative; height: 98px; background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02)); overflow: hidden; }
-.lg-photo-wrap img { width: 100%; height: 98px; object-fit: cover; object-position: 50% 12%; display: block; transform: scale(1.04); transform-origin: top center; }
+.lg-photo-wrap img:not(.lg-team) { width: 100%; height: 98px; object-fit: cover; object-position: 50% 12%; display: block; transform: scale(1.04); transform-origin: top center; }
 .lg-fallback { position: absolute; inset: 0; display: grid; place-items: center; background: linear-gradient(135deg, #1a2e42, #0f1e2b); color: #e6eef3; font-family: 'Barlow Condensed', sans-serif; font-size: 22px; font-weight: 800; letter-spacing: .06em; }
 .lg-team { position: absolute; left: 7px; bottom: 7px; width: 24px; height: 24px; background: #fff; border-radius: 50%; padding: 2px; border: 1px solid rgba(0,0,0,.08); box-shadow: 0 2px 8px rgba(0,0,0,.22); object-fit: contain; }
 .lg-slot { position: absolute; right: 8px; top: 8px; background: rgba(0,0,0,0.40); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); color: #fff; font-family: 'Barlow Condensed', sans-serif; font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 999px; letter-spacing: .08em; border: 1px solid rgba(255,255,255,0.10); box-shadow: 0 1px 6px rgba(0,0,0,.22); line-height: 1.6; }
@@ -407,5 +407,5 @@ a { color: inherit; }
   .roster-groups { padding: 4px 14px 18px; } .player-row { grid-template-columns: 38px minmax(0,1fr) 68px 68px; gap: 6px; font-size: 12px; } .player-war small { display: none; }
   .source-grid { grid-template-columns: 1fr; gap: 0; } .source-section ul { columns: 1; }
   .site-footer { padding: 18px 16px; flex-direction: column; } .empty-result { min-height: 320px; padding: 32px 20px; }
-  .lg-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; } .lg-photo-wrap { height: 88px; } .lg-photo-wrap img { height: 88px; }
+  .lg-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; } .lg-photo-wrap { height: 88px; } .lg-photo-wrap img:not(.lg-team) { height: 88px; }
 }

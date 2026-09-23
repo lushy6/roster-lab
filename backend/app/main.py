@@ -15,8 +15,8 @@ from .demo import demo_data
 from .mlb import fetch_player_snapshot
 from .optimizer import Candidate, RosterRules, optimize_roster
 from .salaries import MAX_SALARY_USD, load_salary_csv, salary_coverage
-from .storage import (delete_demo, get_scenario, has_live_snapshot, latest_salaries, latest_snapshot,
-                      list_scenarios, save_salaries, save_scenario, save_snapshot, seasons_with_data)
+from .storage import (LiveDataPresent, delete_demo, get_scenario, latest_salaries, latest_snapshot, list_scenarios,
+                      save_demo, save_salaries, save_scenario, save_snapshot, seasons_with_data)
 from .domain import SalaryRecord
 from .value import MODEL_VERSION, project_values
 
@@ -139,11 +139,11 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     @app.post("/api/demo/seed")
     def seed_demo():
         snapshot, salaries = demo_data()
-        if has_live_snapshot(db_path, snapshot.season):
+        try:
+            snapshot_id, salary_id = save_demo(db_path, snapshot, salaries)
+        except LiveDataPresent:
             raise HTTPException(409, detail={"code": "live_data_present",
-                                             "message": "Live player data is loaded; demo data would hide it."})
-        snapshot_id = save_snapshot(db_path, snapshot, is_demo=True)
-        salary_id = save_salaries(db_path, 2026, salaries, is_demo=True)
+                                             "message": "Live player data is loaded; demo data would hide it."}) from None
         return {"snapshot_id": snapshot_id, "salary_id": salary_id, "players": len(snapshot.players),
                 "message": "Fictional demo data loaded"}
 
@@ -161,8 +161,7 @@ def create_app(db_path: Path | None = None) -> FastAPI:
                 raise ValueError("MLB returned an empty player pool")
         except (httpx.HTTPError, ValueError) as exc:
             raise HTTPException(502, detail={"code": "refresh_failed", "message": str(exc)}) from exc
-        identifier = save_snapshot(db_path, snapshot)
-        delete_demo(db_path)  # live data supersedes any fictional data
+        identifier = save_snapshot(db_path, snapshot)  # also replaces demo data for this season
         return {"snapshot_id": identifier, "players": len(snapshot.players), "fetched_at": snapshot.fetched_at}
 
     @app.post("/api/salaries/import")

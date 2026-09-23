@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Toaster, toast } from 'sonner'
 import { buildScenario, exitDemo, getScenario, getSeasons, getStatus, importSalaries, listScenarios, refreshMlb, salaryTemplateUrl, seedDemo, type SavedScenario, type Scenario, type Status } from './api'
 import ScenarioForm from './components/ScenarioForm'
@@ -24,26 +24,45 @@ export default function App() {
   const [message, setMessage] = useState('')
   const [tab, setTab] = useState<'roster'|'depth'|'contracts'|'market'|'season'>('roster')
 
-  const reloadStatus = useCallback(async (selectedSeason: number) => {
+  // What the user is looking at right now, for async work that started earlier.
+  const seasonRef = useRef(season)
+  useEffect(() => { seasonRef.current = season }, [season])
+  const latestReload = useRef(0)
+
+  /** Loads status, saved scenarios and seasons. Only the newest call may update the screen; resolves false on failure. */
+  const reloadStatus = useCallback(async (selectedSeason: number): Promise<boolean> => {
+    const id = ++latestReload.current
     try {
       const [nextStatus, history, available] = await Promise.all([getStatus(selectedSeason), listScenarios(selectedSeason), getSeasons()])
+      if (id !== latestReload.current) return true
       setStatus(nextStatus)
       setSavedScenarios(history)
       setSeasons(available.length ? available : [2026])
+      return true
     } catch {
-      const msg = 'The local API is unavailable. Start the backend and reload.'
-      setMessage(msg)
-      toast.error(msg)
+      if (id === latestReload.current) {
+        const msg = 'The local API is unavailable. Start the backend and reload.'
+        setMessage(msg)
+        toast.error(msg)
+      }
+      return false
     }
   }, [])
   useEffect(() => { setScenario(null); void reloadStatus(season) }, [season, reloadStatus])
+
+  // Locked and excluded ids only mean something for the data they were picked from.
+  const isDemo = status?.is_demo ?? false
+  useEffect(() => { setLockedIds([]); setExcludedIds([]) }, [season, isDemo])
 
   // The selected season must always be a choice, even before it has salaries.
   const seasonChoices = seasons.includes(season) ? seasons : [season, ...seasons].sort((a, b) => b - a)
 
   async function action(work: () => Promise<unknown>, success: string) {
     setBusy(true); setMessage('')
-    try { await work(); await reloadStatus(season); setMessage(success); toast.success(success) }
+    try {
+      await work()
+      if (await reloadStatus(seasonRef.current)) { setMessage(success); toast.success(success) }
+    }
     catch (error) { const msg = error instanceof Error ? error.message : 'The action failed.'; setMessage(msg); toast.error(msg) }
     finally { setBusy(false) }
   }
@@ -52,11 +71,13 @@ export default function App() {
     const amount = Number(cap)
     if (!Number.isFinite(amount) || amount <= 0) { const m='Enter a payroll limit above zero.'; setMessage(m); toast.error(m); return }
     if (lockedIds.some(id => excludedIds.includes(id))) { const m='A player cannot be both locked and excluded.'; setMessage(m); toast.error(m); return }
+    const requestedSeason = season
     setBusy(true); setMessage('')
     try {
-      const result = await buildScenario(season, Math.round(amount * 1_000_000), lockedIds, excludedIds)
+      const result = await buildScenario(requestedSeason, Math.round(amount * 1_000_000), lockedIds, excludedIds)
+      if (seasonRef.current !== requestedSeason) return // the user moved to another season while this was solving
       setScenario(result)
-      await reloadStatus(season)
+      await reloadStatus(requestedSeason)
       toast.success(`${result.roster.total_war.toFixed(1)} WAR for ${(result.roster.total_salary/1_000_000).toFixed(1)}m`)
     }
     catch (error) { const msg = error instanceof Error ? error.message : 'Could not build a roster.'; setMessage(msg); toast.error(msg) }
@@ -112,7 +133,7 @@ export default function App() {
             <div className="data-actions">
               {status?.is_demo
                 ? <button type="button" onClick={() => void action(async () => { await exitDemo(); setScenario(null) }, 'Demo data removed.')} disabled={busy}>Exit demo</button>
-                : !liveLoaded && <button type="button" onClick={() => void action(seedDemo, 'Fictional demo data loaded.')} disabled={busy}>Try demo data</button>}
+                : !liveLoaded && <button type="button" onClick={() => void action(async () => { await seedDemo(); setSeason(2026) }, 'Fictional demo data loaded.')} disabled={busy}>Try demo data</button>}
               <button type="button" onClick={() => void action(() => refreshMlb(season), 'Live MLB players refreshed. Import salaries to build a real-player roster.')} disabled={busy}>Refresh MLB players</button>
               {status?.players ? <a className="template-link" href={salaryTemplateUrl(season)} download>Download player template</a> : null}
               <label className="upload-button">Import salary CSV<input aria-label="Import salary CSV" type="file" accept=".csv,text/csv" disabled={busy || Boolean(status?.is_demo)} onChange={event => { const input = event.target; const file = input.files?.[0]; input.value = ''; void upload(file) }} /></label>
@@ -134,7 +155,7 @@ export default function App() {
             )}
           </section>
         </aside>
-        <div className="results" aria-live="polite">
+        <div className="results">
           {message && <div className="message" role="status">{message}</div>}
           {busy && !scenario && (
             <section className="roster-section" aria-hidden>

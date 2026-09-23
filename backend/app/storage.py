@@ -9,9 +9,16 @@ from uuid import uuid4
 from .domain import Player, PlayerSnapshot, SalaryRecord
 
 
-# Newest real snapshot/salary versions kept per season. Versions that a saved
-# scenario points at are always kept, so scenario provenance never dangles.
+# Newest real snapshot/salary versions kept per season, plus the versions behind the newest
+# PINNED_SCENARIOS saved scenarios (the number the UI lists) so their provenance stays traceable.
+# Older scenarios keep their own self-contained payload but stop pinning full league snapshots,
+# which is what keeps the database from growing without bound.
 KEEP_VERSIONS = 3
+PINNED_SCENARIOS = 20
+
+
+class LiveDataPresent(Exception):
+    """Raised when demo data would hide live player data."""
 
 
 def _connect(path: Path) -> sqlite3.Connection:
@@ -42,13 +49,22 @@ def _session(path: Path):
 
 
 def _prune(db: sqlite3.Connection, table: str, reference_column: str, season: int, is_demo: bool) -> None:
-    """Demo data keeps only its newest row; real data keeps KEEP_VERSIONS plus anything a scenario references."""
+    """Demo data keeps only its newest row; real data keeps KEEP_VERSIONS plus what recent scenarios reference.
+
+    `table` and `reference_column` are literals from the two call sites below, never user input.
+    The IS NOT NULL is inside the LIMITed subquery: a single NULL in a NOT IN list would make it match nothing."""
     keep = 1 if is_demo else KEEP_VERSIONS
     db.execute(f"""
         DELETE FROM {table} WHERE season=? AND is_demo=? AND rowid NOT IN (
             SELECT rowid FROM {table} WHERE season=? AND is_demo=? ORDER BY rowid DESC LIMIT ?)
-        AND id NOT IN (SELECT {reference_column} FROM scenarios WHERE {reference_column} IS NOT NULL)
-    """, (season, int(is_demo), season, int(is_demo), keep))
+        AND id NOT IN (SELECT {reference_column} FROM scenarios WHERE {reference_column} IS NOT NULL
+                       ORDER BY rowid DESC LIMIT ?)
+    """, (season, int(is_demo), season, int(is_demo), keep, PINNED_SCENARIOS))
+
+
+def _supersede_demo(db: sqlite3.Connection, season: int) -> None:
+    db.execute("DELETE FROM snapshots WHERE is_demo=1 AND season=?", (season,))
+    db.execute("DELETE FROM salaries WHERE is_demo=1 AND season=?", (season,))
 
 
 def delete_demo(path: Path) -> None:
@@ -57,9 +73,19 @@ def delete_demo(path: Path) -> None:
         db.execute("DELETE FROM salaries WHERE is_demo=1")
 
 
-def has_live_snapshot(path: Path, season: int) -> bool:
+def save_demo(path: Path, snapshot: PlayerSnapshot, records: list[SalaryRecord]) -> tuple[str, str]:
+    """Replace the demo data for the snapshot's season, unless live data would be hidden.
+
+    The check and both writes share one write-locked transaction, so a concurrent refresh
+    cannot leave demo rows newest above live data."""
     with _session(path) as db:
-        return db.execute("SELECT 1 FROM snapshots WHERE season=? AND is_demo=0 LIMIT 1", (season,)).fetchone() is not None
+        db.execute("BEGIN IMMEDIATE")
+        if db.execute("SELECT 1 FROM snapshots WHERE season=? AND is_demo=0 LIMIT 1", (snapshot.season,)).fetchone():
+            raise LiveDataPresent()
+        _supersede_demo(db, snapshot.season)
+        snapshot_id = _insert_snapshot(db, snapshot, is_demo=True)
+        salary_id = _insert_salaries(db, snapshot.season, records, is_demo=True)
+    return snapshot_id, salary_id
 
 
 def seasons_with_data(path: Path) -> list[int]:
@@ -69,17 +95,23 @@ def seasons_with_data(path: Path) -> list[int]:
     return [row["season"] for row in rows]
 
 
-def save_snapshot(path: Path, snapshot: PlayerSnapshot, is_demo: bool = False) -> str:
+def _insert_snapshot(db: sqlite3.Connection, snapshot: PlayerSnapshot, is_demo: bool) -> str:
     identifier = str(uuid4())
     payload = asdict(snapshot)
     for player in payload["players"].values():
         player["eligible_positions"] = sorted(player["eligible_positions"])
     payload["fetched_at"] = snapshot.fetched_at.isoformat()
-    with _session(path) as db:
-        db.execute("INSERT INTO snapshots VALUES (?, ?, ?, ?, ?)",
-                   (identifier, snapshot.season, snapshot.fetched_at.isoformat(), json.dumps(payload), int(is_demo)))
-        _prune(db, "snapshots", "snapshot_id", snapshot.season, is_demo)
+    db.execute("INSERT INTO snapshots VALUES (?, ?, ?, ?, ?)",
+               (identifier, snapshot.season, snapshot.fetched_at.isoformat(), json.dumps(payload), int(is_demo)))
+    _prune(db, "snapshots", "snapshot_id", snapshot.season, is_demo)
     return identifier
+
+
+def save_snapshot(path: Path, snapshot: PlayerSnapshot, is_demo: bool = False) -> str:
+    with _session(path) as db:
+        if not is_demo:
+            _supersede_demo(db, snapshot.season)  # live data replaces fictional data in the same transaction
+        return _insert_snapshot(db, snapshot, is_demo)
 
 
 def latest_snapshot(path: Path, season: int) -> tuple[str, PlayerSnapshot, bool] | None:
@@ -100,14 +132,18 @@ def latest_snapshot(path: Path, season: int) -> tuple[str, PlayerSnapshot, bool]
     return row["id"], snapshot, bool(row["is_demo"])
 
 
-def save_salaries(path: Path, season: int, records: list[SalaryRecord], is_demo: bool = False) -> str:
+def _insert_salaries(db: sqlite3.Connection, season: int, records: list[SalaryRecord], is_demo: bool) -> str:
     identifier = str(uuid4())
     payload = [dict(asdict(record), checked_at=record.checked_at.isoformat()) for record in records]
-    with _session(path) as db:
-        db.execute("INSERT INTO salaries VALUES (?, ?, ?, ?, ?)",
-                   (identifier, season, datetime.now().isoformat(), json.dumps(payload), int(is_demo)))
-        _prune(db, "salaries", "salary_id", season, is_demo)
+    db.execute("INSERT INTO salaries VALUES (?, ?, ?, ?, ?)",
+               (identifier, season, datetime.now().isoformat(), json.dumps(payload), int(is_demo)))
+    _prune(db, "salaries", "salary_id", season, is_demo)
     return identifier
+
+
+def save_salaries(path: Path, season: int, records: list[SalaryRecord], is_demo: bool = False) -> str:
+    with _session(path) as db:
+        return _insert_salaries(db, season, records, is_demo)
 
 
 def latest_salaries(path: Path, season: int) -> tuple[str, list[SalaryRecord], bool] | None:
