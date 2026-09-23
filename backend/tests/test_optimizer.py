@@ -1,3 +1,9 @@
+import time
+import types
+
+from ortools.sat.python import cp_model
+
+from app import optimizer
 from app.optimizer import Candidate, RosterRules, optimize_roster, validate_roster
 from app.demo import demo_data
 from app.main import _candidates
@@ -85,3 +91,68 @@ def test_catcher_can_fill_the_explicit_c2_slot():
     result = optimize_roster(players, rules, 2_000_000)
     assert result.status == "optimal"
     assert {pick.slot for pick in result.picks} == {"C", "C2"}
+
+
+def test_bench_and_backup_catcher_slots_count_a_fraction_of_a_players_value():
+    rules = RosterRules(slots=("1B", "BN1"), require_bench_catcher=False)
+    players = [Candidate(1, "Star", "A", 1_000_000, 5.0, {"1B"}),
+               Candidate(2, "Depth", "B", 1_000_000, 3.0, {"1B"})]
+    result = optimize_roster(players, rules, 2_000_000)
+    by_slot = {pick.slot: pick for pick in result.picks}
+    assert by_slot["1B"].player_id == 1 and by_slot["BN1"].player_id == 2
+    assert by_slot["1B"].weight == 1.0 and by_slot["BN1"].weight == 0.25
+    assert by_slot["BN1"].war == 3.0  # the player's own estimate is untouched
+    assert result.total_war == 5.75
+    assert validate_roster(result, rules, 2_000_000) == []
+
+
+def test_the_better_catcher_takes_the_starting_slot():
+    rules = RosterRules(slots=("C", "C2"), require_bench_catcher=False)
+    players = [Candidate(1, "Backup", "A", 1_000_000, 1.0, {"C"}), Candidate(2, "Starter", "B", 1_000_000, 4.0, {"C"})]
+    by_slot = {pick.slot: pick.player_id for pick in optimize_roster(players, rules, 2_000_000).picks}
+    assert by_slot == {"C": 2, "C2": 1}
+
+
+def test_validator_rejects_a_wrong_slot_weight():
+    rules = RosterRules(slots=("1B", "BN1"), require_bench_catcher=False)
+    players = [Candidate(1, "Star", "A", 1_000_000, 5.0, {"1B"}), Candidate(2, "Depth", "B", 1_000_000, 3.0, {"1B"})]
+    result = optimize_roster(players, rules, 2_000_000)
+    bench = next(pick for pick in result.picks if pick.slot == "BN1")
+    result.picks[result.picks.index(bench)] = bench.__class__(bench.player_id, bench.name, bench.team, bench.slot,
+                                                              bench.salary, bench.war, bench.is_two_way, 1.0)
+    assert "Slot weight is incorrect" in validate_roster(result, rules, 2_000_000)
+
+
+class _TimedOutSolver:
+    def __init__(self):
+        self.parameters = types.SimpleNamespace()
+
+    def solve(self, model):
+        return cp_model.UNKNOWN
+
+
+def test_solver_timeout_is_not_reported_as_infeasible(monkeypatch):
+    monkeypatch.setattr(optimizer.cp_model, "CpSolver", _TimedOutSolver)
+    rules = RosterRules(slots=("DH",), require_bench_catcher=False)
+    result = optimize_roster([Candidate(1, "Only", "A", 1_000_000, 1.0, {"DH"})], rules, 2_000_000)
+    assert result.status == "timeout"
+    assert result.minimum_feasible_salary is None
+    assert "limit" in result.reason
+
+
+def test_a_genuinely_infeasible_cap_is_still_infeasible_with_a_cheapest_cost():
+    rules = RosterRules(slots=("DH",), require_bench_catcher=False)
+    result = optimize_roster([Candidate(1, "Only", "A", 3_000_000, 1.0, {"DH"})], rules, 1_000_000)
+    assert result.status == "infeasible" and result.minimum_feasible_salary == 3_000_000
+
+
+def test_solver_scales_to_a_league_sized_pool():
+    pool = []
+    for i in range(1, 1201):
+        hitters = ("C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "DH")
+        positions = {hitters[(i // 3) % 9]} if i % 3 else {("SP", "RP")[i % 2]}
+        pool.append(Candidate(i, f"P{i}", "T", 700_000 + (i * 37_000) % 30_000_000, ((i * 7919) % 500) / 100, positions))
+    started = time.perf_counter()
+    result = optimize_roster(pool, RosterRules(), 220_000_000)
+    assert result.status in {"optimal", "feasible"}
+    assert time.perf_counter() - started < 20

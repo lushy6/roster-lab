@@ -101,3 +101,31 @@ def test_saved_scenario_history_lists_recent_scenarios(tmp_path):
     assert history.status_code == 200
     assert history.json()[0]["id"] == made["id"]
     assert history.json()[0]["total_war"] == made["roster"]["total_war"]
+
+
+def test_solver_timeout_surfaces_as_a_retryable_503(tmp_path, monkeypatch):
+    import types
+    from ortools.sat.python import cp_model
+    from app import optimizer
+
+    class Timeout:
+        def __init__(self):
+            self.parameters = types.SimpleNamespace()
+
+        def solve(self, model):
+            return cp_model.UNKNOWN
+
+    client = TestClient(create_app(tmp_path / "test.db"))
+    client.post("/api/demo/seed")
+    monkeypatch.setattr(optimizer.cp_model, "CpSolver", Timeout)
+    response = client.post("/api/scenarios", json={"season": 2026, "cap_usd": 150_000_000})
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "solver_timeout"
+
+
+def test_scenario_bench_picks_carry_their_slot_weight(tmp_path):
+    client = TestClient(create_app(tmp_path / "test.db"))
+    client.post("/api/demo/seed")
+    picks = client.post("/api/scenarios", json={"season": 2026, "cap_usd": 150_000_000}).json()["roster"]["picks"]
+    weights = {pick["slot"]: pick["weight"] for pick in picks}
+    assert weights["BN1"] == 0.25 and weights["C2"] == 0.25 and weights["SP1"] == 1.0 and weights["RP1"] == 1.0

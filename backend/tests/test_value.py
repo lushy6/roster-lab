@@ -46,3 +46,33 @@ def test_input_seasons_only_list_seasons_used_by_projection():
         2025: {"plateAppearances": 600, "ops": ".800"},
     })
     assert project_values(snapshot(player), 2026)[10].input_seasons == [2024, 2025]
+
+
+def test_a_single_season_is_not_penalised_for_the_missing_year():
+    one = Player(10, "One", "Club", "1B", {"1B"}, hitting={2025: {"plateAppearances": 600, "ops": ".800"}})
+    two = Player(11, "Two", "Club", "1B", {"1B"}, hitting={2024: {"plateAppearances": 600, "ops": ".800"},
+                                                           2025: {"plateAppearances": 600, "ops": ".800"}})
+    result = project_values(PlayerSnapshot(2026, datetime.now(timezone.utc), [], {10: one, 11: two}), 2026)
+    assert result[10].estimated_war == result[11].estimated_war
+
+
+def test_a_single_pitching_season_is_not_penalised_for_the_missing_year():
+    one = Player(10, "One", "Club", "P", {"SP"}, pitching={2025: {"inningsPitched": "180.0", "era": "3.50"}})
+    two = Player(11, "Two", "Club", "P", {"SP"}, pitching={2024: {"inningsPitched": "180.0", "era": "3.50"},
+                                                           2025: {"inningsPitched": "180.0", "era": "3.50"}})
+    result = project_values(PlayerSnapshot(2026, datetime.now(timezone.utc), [], {10: one, 11: two}), 2026)
+    assert result[10].estimated_war == result[11].estimated_war
+
+
+def test_recent_season_still_outweighs_the_older_one():
+    improving = Player(10, "Up", "Club", "1B", {"1B"}, hitting={2024: {"plateAppearances": 600, "ops": ".700"},
+                                                                2025: {"plateAppearances": 600, "ops": ".900"}})
+    declining = Player(11, "Down", "Club", "1B", {"1B"}, hitting={2024: {"plateAppearances": 600, "ops": ".900"},
+                                                                  2025: {"plateAppearances": 600, "ops": ".700"}})
+    result = project_values(PlayerSnapshot(2026, datetime.now(timezone.utc), [], {10: improving, 11: declining}), 2026)
+    assert result[10].estimated_war > result[11].estimated_war
+
+
+def test_model_version_is_v2_after_the_weighting_change():
+    player = Player(10, "One", "Club", "1B", {"1B"}, hitting={2025: {"plateAppearances": 600, "ops": ".800"}})
+    assert project_values(snapshot(player), 2026)[10].model_version == "war-proxy-v2"

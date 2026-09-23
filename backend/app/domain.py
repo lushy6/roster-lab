@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 
 
-MODEL_VERSION = "war-proxy-v1"
+MODEL_VERSION = "war-proxy-v2"
 
 
 @dataclass(frozen=True)

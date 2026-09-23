@@ -282,6 +282,8 @@ def create_app(db_path: Path | None = None) -> FastAPI:
             raise HTTPException(422, detail={"code": "unknown_excluded_player", "message": "An excluded player has no salary or is outside this season"})
         result = optimize_roster(candidates, RosterRules(), request.cap_usd,
                                  set(request.locked_ids), set(request.excluded_ids))
+        if result.status == "timeout":
+            raise HTTPException(503, detail={"code": "solver_timeout", "message": result.reason})
         if result.status == "infeasible":
             raise HTTPException(422, detail={"code": "infeasible_roster", "message": result.reason,
                                              "minimum_feasible_salary": result.minimum_feasible_salary})
@@ -313,11 +315,11 @@ def create_app(db_path: Path | None = None) -> FastAPI:
             alt = optimize_roster(candidates, RosterRules(), alt_cap,
                                   locked_ids, set(request.excluded_ids),
                                   avoid_ids=avoid_ids)
-            distinct = bool(avoid_ids) and alt.status != "infeasible"
+            distinct = bool(avoid_ids) and alt.ok
             if not distinct:
                 alt = optimize_roster(candidates, RosterRules(), alt_cap,
                                       locked_ids, set(request.excluded_ids))
-            if alt.status != "infeasible":
+            if alt.ok:
                 alternatives.append({"cap_usd": alt_cap, "roster": asdict(alt),
                                      "distinct_from_primary": distinct})
         coverage = salary_coverage(set(snapshot.players), salaries, request.season)
