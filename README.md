@@ -4,9 +4,17 @@ A local MLB front-office simulator. The first playable slice builds a hypothetic
 
 ## Development
 
-From `backend`, run `..\.venv\Scripts\python.exe -m uvicorn app.main:app --reload`. From `frontend`, run `npm install` and `npm run dev`. The frontend expects the API on `http://localhost:8000`.
+From `backend`, run `..\.venv\Scripts\python.exe -m uvicorn app.main:app --reload`. From `frontend`, run `npm install` and `npm run dev`. The frontend expects the API on `http://127.0.0.1:8000` (override with `VITE_API_URL`). Python dependencies are pinned in `backend/requirements.lock`.
+
+The API stores everything in `data/roster.db`. Set `ROSTER_DB` to a file path to use a different database, for example when experimenting.
+
+Checks: from `backend`, `..\.venv\Scripts\python.exe -m pytest`. From `frontend`, `npm run lint`, `npm run typecheck`, `npm run test:unit`, and `npm run test:e2e`. The e2e suite starts its own API and UI on ports 8010 and 5183 with a throwaway database, so it never touches your dev servers or `data/roster.db`.
 
 Salary CSV columns: `player_id,season,base_salary_usd,source_url,checked_at,reviewer_note`. `base_salary_usd` stores the annual player salary or payroll figure reported by the cited source. Missing salary excludes a player from optimization. `reviewer_note` is optional and is carried into saved scenario provenance.
+
+Importing a CSV **merges** with the salaries already on file: a player in the CSV replaces their earlier salary and everyone else is kept. Pass `mode=replace` (`POST /api/salaries/import?season=2026&mode=replace`) to swap out the whole register instead. The API keeps the newest three player snapshots and salary registers per season, plus any version a saved scenario points at, and deletes older ones.
+
+**Demo mode** loads fictional players so you can try the app. It refuses to load while live player data exists, live refreshes replace it, salary import is blocked while it is active, and **Exit demo** (`DELETE /api/demo`) removes it.
 
 The checked-in `data/salary-template-2026.csv` contains the complete 2026 MLB player snapshot used when it was generated, with salary and attribution fields intentionally blank for review. The populated `data/salary-register-2026.csv` is the imported 2026 register used by the local database. It contains 904 unique player salaries matched to MLB Stats API IDs; the remaining live players stay blank until an attributed source row is available.
 
@@ -16,4 +24,17 @@ To rebuild the register after replacing the raw source export, run `.venv\Script
 
 ## Value estimate
 
-Version `war-proxy-v1` is an **approximate WAR-like estimate**, not an official WAR statistic or a validated forecast. It uses only the two seasons before the selected season. The most recent season receives weight 0.65 and the older one 0.35. OPS regresses toward .720 over 200 plate appearances; ERA regresses toward 4.20 over 50 innings. Projected playing time is the weighted prior playing time, capped at 650 plate appearances or 200 innings. The hitting estimate converts the OPS difference into runs using `(OPS - .720) × PA / 4`, then adds 2 replacement wins per 600 PA and a position adjustment. The pitching estimate uses `(4.20 - ERA) × IP / 9` runs and 2 replacement wins per 180 IP. Ten runs equal one win. It omits defense, park effects, detailed baserunning, and injury forecasts; the app exposes those limits with each result. Two-way estimates add hitting and pitching value once each.
+Version `war-proxy-v2` is an **approximate WAR-like estimate**, not an official WAR statistic or a validated forecast. It uses only the two seasons before the selected season. The most recent season receives weight 0.65 and the older one 0.35. A player with only one of those seasons on file has that season weighted fully (v1 weighted the missing year as zero playing time, which understated rookies and returning veterans; saved v1 scenarios keep their original numbers). OPS regresses toward .720 over 200 plate appearances; ERA regresses toward 4.20 over 50 innings. Projected playing time is the weighted prior playing time, capped at 650 plate appearances or 200 innings. The hitting estimate converts the OPS difference into runs using `(OPS - .720) × PA / 4`, then adds 2 replacement wins per 600 PA and a position adjustment. The pitching estimate uses `(4.20 - ERA) × IP / 9` runs and 2 replacement wins per 180 IP. Ten runs equal one win. It omits defense, park effects, detailed baserunning, and injury forecasts; the app exposes those limits with each result. Two-way estimates add hitting and pitching value once each.
+
+
+## Roster value
+
+The optimizer maximizes **slot-weighted** WAR under the payroll limit. Lineup, rotation and bullpen slots count a player's full estimate. The backup catcher (`C2`) and the three bench slots (`BN1`–`BN3`) count 25% of it, roughly a bench bat's share of a starter's plate appearances, so the optimizer no longer parks a star on the bench at full value. Each pick shows its own estimate, and `Pick.weight` and the CSV export's `slot_weight` and `counted_war` columns show what counted. The weights are assumptions, not measurements; change them per scenario with `RosterRules(slot_weights={...})`.
+
+Position eligibility can still put a bench player above a weaker starter: the best remaining hitter may simply not be able to play the scarce position.
+
+If the solver runs out of time (15 seconds per solve) before finding any roster, the API returns 503 `solver_timeout`. That is different from a payroll limit that is genuinely too low, which returns 422 with the cheapest valid payroll.
+
+## Preview tabs
+
+Contracts, Market and Season lab are placeholders and are labelled "preview" in the UI. Contracts repeats the 2026 salary for later years, Market only reports cap room, and Season lab draws a band whose width you pick with a slider; none of them is derived from contract, transaction, playing-time or injury data.

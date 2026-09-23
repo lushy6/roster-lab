@@ -12,7 +12,6 @@ function StatLine({ pick }: { pick: Pick }) {
   const s = pick.stats || {}
   const hasHitting = s.ops || s.avg || s.hr
   const hasPitching = s.era && s.era !== 'null'
-  // graceful: if genuinely missing, show — with zinc-500
   if (hasPitching && !hasHitting) {
     return (
       <span className="lg-stats tabular-nums">
@@ -69,7 +68,7 @@ function Headshot({ pick }: { pick: Pick }) {
           <span>{initials(pick.name)}</span>
         </div>
       )}
-      {/* team badge: FA with zinc-500 if free agent, else logo */}
+      {/* free agents get a text badge; everyone else gets their club logo */}
       {pick.team_abbrev === 'FA' || !pick.team_logo_url ? (
         <span className="lg-team-fa">FA</span>
       ) : (
@@ -162,7 +161,7 @@ export default function LineupGraphic({ picks }: { picks: Pick[] }) {
         </div>
       </div>
       <div className="lg-legend">
-        <span className="lg-legend-dot" /> Premium minimal field · <span className="tabular-nums">.256</span> <span className="lg-legend-muted">0.825 OPS · 31 HR</span> — missing <span className="tabular-nums">—</span> gracefully muted
+        <span className="lg-legend-dot" /> Stats shown are last season's. <span className="lg-legend-muted">A dash means MLB has no figure for that stat.</span>
       </div>
     </div>
   )

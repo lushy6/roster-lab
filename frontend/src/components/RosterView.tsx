@@ -1,8 +1,10 @@
 import type { Pick, Scenario } from '../api'
+import { rosterToCsv } from '../csv'
 import LineupGraphic from './LineupGraphic'
 
 const money = (value: number) => `$${(value / 1_000_000).toFixed(1)}m`
 const warPerMillion = (war: number, salary: number) => salary > 0 ? (war / (salary / 1_000_000)).toFixed(2) : '—'
+const percent = (weight: number) => `${Math.round(weight * 100)}%`
 const groups = [
   { title: 'Bench', test: (slot: string) => slot.startsWith('BN') || slot === 'C2' },
   { title: 'Rotation', test: (slot: string) => slot.startsWith('SP') },
@@ -17,7 +19,7 @@ function PlayerRow({ pick, index }: { pick: Pick; index: number }) {
     <div className="player-row" data-testid="roster-player" style={{ animationDelay: `${index * 28}ms` }}>
       <span className="slot">{pick.slot}</span>
       <div className="player-name">
-        <strong>{pick.name} <span className="eff-badge" title="WAR per $1M">{warPerMillion(pick.war, pick.salary)}/$1M</span></strong>
+        <strong>{pick.name} <span className="eff-badge" title="WAR per $1M">{warPerMillion(pick.war, pick.salary)}/$1M</span>{(pick.weight ?? 1) < 1 && <span className="eff-badge" title={`This slot counts ${percent(pick.weight ?? 1)} of the player's estimated WAR toward the roster total`}>counts {percent(pick.weight ?? 1)}</span>}</strong>
         <small>{pick.team_abbrev || pick.team} · {statText} {statText ? '·' : ''} {pick.input_seasons.join('–') || 'limited'} · <span className="unc-dot" style={{ background: uncColor }} />{pick.uncertainty}</small>
       </div>
       <span className="player-war" title={`Hitting ${pick.hitting_war.toFixed(1)} + Pitching ${pick.pitching_war.toFixed(1)}`}>{pick.war.toFixed(1)} <small>est. WAR</small></span>
@@ -27,10 +29,7 @@ function PlayerRow({ pick, index }: { pick: Pick; index: number }) {
 }
 
 function exportCsv(scenario: Scenario) {
-  const rows = [['slot','player_id','name','team','salary_usd','war','uncertainty','source_url']]
-  for (const p of scenario.roster.picks) rows.push([p.slot, String(p.player_id), `"${p.name}"`, p.team, String(p.salary), p.war.toFixed(2), p.uncertainty, p.salary_source_url])
-  const csv = rows.map(r => r.join(',')).join('\n')
-  const blob = new Blob([csv], { type: 'text/csv' })
+  const blob = new Blob([rosterToCsv(scenario.roster.picks)], { type: 'text/csv' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url; a.download = `roster-${scenario.season}-${scenario.cap_usd}.csv`; a.click()
@@ -39,8 +38,8 @@ function exportCsv(scenario: Scenario) {
 
 export default function RosterView({ scenario }: { scenario: Scenario }) {
   const roster = scenario.roster
-  const efficiency = roster.total_salary > 0 ? (roster.total_war / (roster.total_salary / 1_000_000)).toFixed(2) : '—'
-  const pct = Math.min(100, Math.round((roster.total_salary / scenario.cap_usd) * 100))
+  const efficiency = warPerMillion(roster.total_war, roster.total_salary)
+  const pct = scenario.cap_usd > 0 ? Math.min(100, Math.round((roster.total_salary / scenario.cap_usd) * 100)) : 0
   let idx = 0
   const gaugeColor = pct > 95 ? '#c4363f' : pct > 85 ? '#d98a1a' : '#1f9d6a'
   const primaryIds = new Set(roster.picks.map(p => p.player_id))
@@ -59,7 +58,7 @@ export default function RosterView({ scenario }: { scenario: Scenario }) {
       <div className="scoreline">
         <div><span>Payroll</span><strong>{money(roster.total_salary)}</strong><small>of {money(scenario.cap_usd)} limit</small></div>
         <div><span>Cap remaining</span><strong>{money(scenario.cap_usd - roster.total_salary)}</strong><small>{pct}% utilized</small></div>
-        <div><span>Projected value</span><strong>{roster.total_war.toFixed(1)}</strong><small>estimated WAR</small></div>
+        <div><span>Projected value</span><strong>{roster.total_war.toFixed(1)}</strong><small>estimated WAR{roster.picks.some(p => (p.weight ?? 1) < 1) ? ', bench weighted' : ''}</small></div>
         <div><span>Efficiency</span><strong>{efficiency}</strong><small>WAR per $1M</small></div>
       </div>
       <div className="payroll-gauge" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label="Payroll utilization">
@@ -87,7 +86,7 @@ export default function RosterView({ scenario }: { scenario: Scenario }) {
                 <div className="compare-item" key={alt.cap_usd}>
                   <span>{money(alt.cap_usd)} limit {alt.distinct_from_primary ? '· distinct' : ''}</span>
                   <strong>{alt.roster.total_war.toFixed(1)} estimated WAR</strong>
-                  <small>{money(alt.roster.total_salary)} payroll · {(alt.roster.total_war / (alt.roster.total_salary / 1_000_000)).toFixed(2)} WAR/$1M</small>
+                  <small>{money(alt.roster.total_salary)} payroll · {warPerMillion(alt.roster.total_war, alt.roster.total_salary)} WAR/$1M</small>
                   <small style={{ color: newCount ? '#1a5a7a' : '#6b8794', fontWeight: 600 }}>{newCount ? `${newCount} new players vs primary` : 'Same core'}</small>
                 </div>
               )

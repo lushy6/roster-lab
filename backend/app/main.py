@@ -254,10 +254,10 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     @app.get("/api/coverage")
     def coverage(season: int = 2026):
         snapshot = latest_snapshot(db_path, season)
-        salary = latest_salaries(db_path, season)
-        if not snapshot or not salary:
-            raise HTTPException(404, detail={"code": "missing_data", "message": "Refresh players and import salaries first"})
-        result = salary_coverage(set(snapshot[1].players), salary[1], season)
+        if not snapshot:
+            raise HTTPException(404, detail={"code": "missing_players", "message": "Refresh players first"})
+        salary = latest_salaries(db_path, season)  # before any import, everyone is simply unpriced
+        result = salary_coverage(set(snapshot[1].players), salary[1] if salary else [], season)
         missing = []
         for pid in result.missing_player_ids[:200]:
             player = snapshot[1].players.get(pid)

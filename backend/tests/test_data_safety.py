@@ -168,3 +168,19 @@ def test_cors_allows_any_localhost_port_but_not_lookalike_hosts(tmp_path):
     assert allowed("http://localhost:5173") == "http://localhost:5173"
     assert allowed("http://localhost.evil.example") is None
     assert allowed("https://127.0.0.1:5173") is None
+
+
+def test_coverage_before_any_salary_import_reports_everyone_missing(tmp_path):
+    db = tmp_path / "test.db"
+    save_snapshot(db, live_snapshot())
+    client = TestClient(create_app(db))
+    response = client.get("/api/coverage?season=2026")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["priced_count"] == 0 and body["total_players"] == 1
+    assert body["missing_player_ids"] == [1] and body["missing_players"][0]["name"] == "Live 1"
+
+
+def test_coverage_without_any_player_data_is_still_a_clear_404(tmp_path):
+    response = TestClient(create_app(tmp_path / "test.db")).get("/api/coverage?season=2026")
+    assert response.status_code == 404 and response.json()["detail"]["code"] == "missing_players"

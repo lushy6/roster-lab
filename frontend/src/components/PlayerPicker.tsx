@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { searchPlayers, type PlayerSearch } from '../api'
 
 type Props = {
@@ -15,15 +15,24 @@ export default function PlayerPicker({ label, placeholder, season, values, onCha
   const [open, setOpen] = useState(false)
   const [results, setResults] = useState<PlayerSearch[]>([])
   const [active, setActive] = useState(0)
+  // Names of everyone added here, so pills keep reading "Aaron Judge · Team" after the search clears.
+  const [labels, setLabels] = useState<Record<number, string>>({})
   const wrapRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const listId = useId()
 
   useEffect(() => {
     if (!open || q.trim().length < 1) { setResults([]); return }
-    const t = setTimeout(async () => {
-      try { setResults(await searchPlayers(season, q.trim(), 8)) } catch { setResults([]) }
+    let stale = false // a slow earlier response must not overwrite a newer one
+    const timer = setTimeout(async () => {
+      try {
+        const found = await searchPlayers(season, q.trim(), 8)
+        if (!stale) { setResults(found); setActive(0) }
+      } catch {
+        if (!stale) setResults([])
+      }
     }, 150)
-    return () => clearTimeout(t)
+    return () => { stale = true; clearTimeout(timer) }
   }, [q, season, open])
 
   useEffect(() => {
@@ -32,19 +41,17 @@ export default function PlayerPicker({ label, placeholder, season, values, onCha
     return () => window.removeEventListener('mousedown', h)
   }, [])
 
-  const add = (id: number) => {
-    if (values.includes(id)) return
-    onChange([...values, id])
+  const add = (player: PlayerSearch) => {
+    if (values.includes(player.id)) return
+    setLabels(prev => ({ ...prev, [player.id]: `${player.name} · ${player.team}` }))
+    onChange([...values, player.id])
     setQ(''); setOpen(false); setResults([])
     inputRef.current?.focus()
   }
   const remove = (id: number) => onChange(values.filter(v => v !== id))
-
-  // resolve names for pills - we show ID + fetch name if needed via results cache
-  const pillLabel = (id: number) => {
-    const hit = results.find(r => r.id === id)
-    return hit ? `${hit.name} · ${hit.team}` : `#${id}`
-  }
+  const pillLabel = (id: number) => labels[id] ?? `#${id}`
+  const showList = open && q.trim().length >= 1
+  const optionId = (index: number) => `${listId}-option-${index}`
 
   return (
     <div className="picker" ref={wrapRef}>
@@ -52,18 +59,21 @@ export default function PlayerPicker({ label, placeholder, season, values, onCha
         <div className="picker-input-wrap">
           <input
             ref={inputRef}
+            role="combobox"
             value={q}
             disabled={disabled}
             placeholder={placeholder}
             onFocus={() => setOpen(true)}
             onChange={e => { setQ(e.target.value); setOpen(true); setActive(0) }}
             onKeyDown={e => {
-              if (e.key === 'ArrowDown') { e.preventDefault(); setActive(a => Math.min(a + 1, results.length - 1)) }
+              if (e.key === 'ArrowDown') { e.preventDefault(); setActive(a => Math.max(0, Math.min(a + 1, results.length - 1))) }
               else if (e.key === 'ArrowUp') { e.preventDefault(); setActive(a => Math.max(a - 1, 0)) }
-              else if (e.key === 'Enter' && results[active]) { e.preventDefault(); add(results[active].id) }
+              else if (e.key === 'Enter' && results[active]) { e.preventDefault(); add(results[active]) }
               else if (e.key === 'Escape') setOpen(false)
             }}
-            aria-expanded={open}
+            aria-expanded={showList}
+            aria-controls={listId}
+            aria-activedescendant={showList && results[active] ? optionId(active) : undefined}
             aria-autocomplete="list"
           />
           <span className="picker-count">{values.length ? `${values.length} selected` : ''}</span>
@@ -75,25 +85,27 @@ export default function PlayerPicker({ label, placeholder, season, values, onCha
           {values.map(id => (
             <span key={id} className="picker-pill">
               {pillLabel(id)}
-              <button type="button" aria-label={`Remove ${id}`} onClick={() => remove(id)}>×</button>
+              <button type="button" aria-label={`Remove ${pillLabel(id)}`} onClick={() => remove(id)}>×</button>
             </span>
           ))}
         </div>
       )}
 
-      {open && q.trim().length >= 1 && (
-        <div className="picker-popover" role="listbox">
+      {showList && (
+        <div className="picker-popover" role="listbox" id={listId} aria-label={`${label} suggestions`}>
           {results.length === 0 ? (
             <div className="picker-empty">No players match “{q}”.</div>
           ) : results.map((p, i) => (
             <button
               key={p.id}
+              id={optionId(i)}
               type="button"
               role="option"
+              tabIndex={-1}
               aria-selected={i === active}
               className={`picker-option ${i === active ? 'is-active' : ''} ${!p.is_priced ? 'is-unpriced' : ''}`}
               onMouseEnter={() => setActive(i)}
-              onClick={() => add(p.id)}
+              onClick={() => add(p)}
             >
               <span className="picker-opt-name"><strong>{p.name}</strong><small>{p.team} · {p.primary_position} {p.eligible_positions.join('/')}</small></span>
               <span className="picker-opt-meta">

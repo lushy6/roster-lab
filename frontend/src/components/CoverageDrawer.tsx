@@ -1,20 +1,23 @@
 import { useEffect, useState } from 'react'
-import { API } from '../api'
-
-type Missing = { id: number; name: string; team: string; primary_position: string }
-type Coverage = { priced_count: number; total_players: number; missing_player_ids: number[]; missing_players: Missing[] }
+import { getCoverage, salaryTemplateUrl, type Coverage } from '../api'
 
 export default function CoverageDrawer({ season, coveragePct, priced, total }: { season: number; coveragePct: number; priced: number; total: number }) {
   const [open, setOpen] = useState(false)
   const [data, setData] = useState<Coverage | null>(null)
+  const [error, setError] = useState('')
   const [q, setQ] = useState('')
 
   useEffect(() => {
     if (!open) return
-    fetch(`${API}/api/coverage?season=${season}`).then(r => r.json()).then(setData).catch(() => setData(null))
+    let cancelled = false
+    getCoverage(season)
+      .then(result => { if (!cancelled) { setData(result); setError('') } })
+      .catch(reason => { if (!cancelled) { setData(null); setError(reason instanceof Error ? reason.message : 'Could not load coverage.') } })
+    return () => { cancelled = true }
   }, [open, season])
 
-  const filtered = data?.missing_players.filter(p => !q || p.name.toLowerCase().includes(q.toLowerCase()) || p.team.toLowerCase().includes(q.toLowerCase())) ?? []
+  const needle = q.toLowerCase()
+  const filtered = data?.missing_players.filter(p => !needle || p.name.toLowerCase().includes(needle) || p.team.toLowerCase().includes(needle)) ?? []
 
   return (
     <>
@@ -24,10 +27,11 @@ export default function CoverageDrawer({ season, coveragePct, priced, total }: {
       {open && (
         <div className="coverage-drawer">
           <div className="coverage-drawer-head">
-            <strong>{data ? `${filtered.length} of ${data.missing_player_ids.length} missing` : 'Loading…'}</strong>
+            <strong>{data ? `${filtered.length} of ${data.missing_player_ids.length} missing` : error ? 'Unavailable' : 'Loading…'}</strong>
             <span>{coveragePct}% priced · {priced}/{total}</span>
           </div>
-          <input placeholder="Filter missing — name or team" value={q} onChange={e => setQ(e.target.value)} className="coverage-filter" />
+          {error && <div className="coverage-empty" role="alert">{error}</div>}
+          <input placeholder="Filter missing — name or team" aria-label="Filter missing players" value={q} onChange={e => setQ(e.target.value)} className="coverage-filter" />
           <div className="coverage-list">
             {filtered.slice(0, 80).map(p => (
               <div key={p.id} className="coverage-row">
@@ -39,7 +43,7 @@ export default function CoverageDrawer({ season, coveragePct, priced, total }: {
             {filtered.length === 0 && data && <div className="coverage-empty">No missing players match “{q}”.</div>}
           </div>
           <div className="coverage-actions">
-            <a className="template-link" href={`${API}/api/salaries/template?season=${season}`} download>Download template CSV</a>
+            <a className="template-link" href={salaryTemplateUrl(season)} download>Download template CSV</a>
             <span className="coverage-help">Add source_url + checked_at to include a player in optimization.</span>
           </div>
         </div>
