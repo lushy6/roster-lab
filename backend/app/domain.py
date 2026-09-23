@@ -2,6 +2,9 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 
 
+MODEL_VERSION = "war-proxy-v1"
+
+
 @dataclass(frozen=True)
 class SalaryRecord:
     player_id: int
@@ -55,4 +58,4 @@ class ValueProjection:
     pitching_war: float
     uncertainty: str
     input_seasons: list[int]
-    model_version: str = "war-proxy-v1"
+    model_version: str = MODEL_VERSION

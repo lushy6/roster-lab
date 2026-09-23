@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import date, datetime
 import json
@@ -6,6 +7,11 @@ import sqlite3
 from uuid import uuid4
 
 from .domain import Player, PlayerSnapshot, SalaryRecord
+
+
+# Newest real snapshot/salary versions kept per season. Versions that a saved
+# scenario points at are always kept, so scenario provenance never dangles.
+KEEP_VERSIONS = 3
 
 
 def _connect(path: Path) -> sqlite3.Connection:
@@ -20,20 +26,64 @@ def _connect(path: Path) -> sqlite3.Connection:
     return connection
 
 
+@contextmanager
+def _session(path: Path):
+    """Commit on success, roll back on error, and always close (sqlite3's own
+    context manager only commits, so connections used to leak until GC)."""
+    connection = _connect(path)
+    try:
+        yield connection
+        connection.commit()
+    except BaseException:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+def _prune(db: sqlite3.Connection, table: str, reference_column: str, season: int, is_demo: bool) -> None:
+    """Demo data keeps only its newest row; real data keeps KEEP_VERSIONS plus anything a scenario references."""
+    keep = 1 if is_demo else KEEP_VERSIONS
+    db.execute(f"""
+        DELETE FROM {table} WHERE season=? AND is_demo=? AND rowid NOT IN (
+            SELECT rowid FROM {table} WHERE season=? AND is_demo=? ORDER BY rowid DESC LIMIT ?)
+        AND id NOT IN (SELECT {reference_column} FROM scenarios WHERE {reference_column} IS NOT NULL)
+    """, (season, int(is_demo), season, int(is_demo), keep))
+
+
+def delete_demo(path: Path) -> None:
+    with _session(path) as db:
+        db.execute("DELETE FROM snapshots WHERE is_demo=1")
+        db.execute("DELETE FROM salaries WHERE is_demo=1")
+
+
+def has_live_snapshot(path: Path, season: int) -> bool:
+    with _session(path) as db:
+        return db.execute("SELECT 1 FROM snapshots WHERE season=? AND is_demo=0 LIMIT 1", (season,)).fetchone() is not None
+
+
+def seasons_with_data(path: Path) -> list[int]:
+    """Seasons that can actually build a roster: players and salaries both present."""
+    with _session(path) as db:
+        rows = db.execute("SELECT season FROM snapshots INTERSECT SELECT season FROM salaries ORDER BY season DESC").fetchall()
+    return [row["season"] for row in rows]
+
+
 def save_snapshot(path: Path, snapshot: PlayerSnapshot, is_demo: bool = False) -> str:
     identifier = str(uuid4())
     payload = asdict(snapshot)
     for player in payload["players"].values():
         player["eligible_positions"] = sorted(player["eligible_positions"])
     payload["fetched_at"] = snapshot.fetched_at.isoformat()
-    with _connect(path) as db:
+    with _session(path) as db:
         db.execute("INSERT INTO snapshots VALUES (?, ?, ?, ?, ?)",
                    (identifier, snapshot.season, snapshot.fetched_at.isoformat(), json.dumps(payload), int(is_demo)))
+        _prune(db, "snapshots", "snapshot_id", snapshot.season, is_demo)
     return identifier
 
 
 def latest_snapshot(path: Path, season: int) -> tuple[str, PlayerSnapshot, bool] | None:
-    with _connect(path) as db:
+    with _session(path) as db:
         row = db.execute("SELECT * FROM snapshots WHERE season=? ORDER BY rowid DESC LIMIT 1", (season,)).fetchone()
     if row is None:
         return None
@@ -53,14 +103,15 @@ def latest_snapshot(path: Path, season: int) -> tuple[str, PlayerSnapshot, bool]
 def save_salaries(path: Path, season: int, records: list[SalaryRecord], is_demo: bool = False) -> str:
     identifier = str(uuid4())
     payload = [dict(asdict(record), checked_at=record.checked_at.isoformat()) for record in records]
-    with _connect(path) as db:
+    with _session(path) as db:
         db.execute("INSERT INTO salaries VALUES (?, ?, ?, ?, ?)",
                    (identifier, season, datetime.now().isoformat(), json.dumps(payload), int(is_demo)))
+        _prune(db, "salaries", "salary_id", season, is_demo)
     return identifier
 
 
 def latest_salaries(path: Path, season: int) -> tuple[str, list[SalaryRecord], bool] | None:
-    with _connect(path) as db:
+    with _session(path) as db:
         row = db.execute("SELECT * FROM salaries WHERE season=? ORDER BY rowid DESC LIMIT 1", (season,)).fetchone()
     if row is None:
         return None
@@ -73,14 +124,14 @@ def latest_salaries(path: Path, season: int) -> tuple[str, list[SalaryRecord], b
 
 def save_scenario(path: Path, season: int, snapshot_id: str, salary_id: str, payload: dict) -> str:
     identifier = str(uuid4())
-    with _connect(path) as db:
+    with _session(path) as db:
         db.execute("INSERT INTO scenarios VALUES (?, ?, ?, ?, ?, ?)",
                    (identifier, season, datetime.now().isoformat(), snapshot_id, salary_id, json.dumps(payload)))
     return identifier
 
 
 def get_scenario(path: Path, identifier: str) -> dict | None:
-    with _connect(path) as db:
+    with _session(path) as db:
         row = db.execute("SELECT * FROM scenarios WHERE id=?", (identifier,)).fetchone()
     if row is None:
         return None
@@ -96,7 +147,7 @@ def list_scenarios(path: Path, season: int | None = None, limit: int = 20) -> li
         params.append(season)
     query += " ORDER BY rowid DESC LIMIT ?"
     params.append(limit)
-    with _connect(path) as db:
+    with _session(path) as db:
         rows = db.execute(query, tuple(params)).fetchall()
     summaries = []
     for row in rows:

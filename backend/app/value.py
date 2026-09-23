@@ -1,4 +1,4 @@
-from .domain import Player, PlayerSnapshot, ValueProjection
+from .domain import MODEL_VERSION, Player, PlayerSnapshot, ValueProjection
 
 
 LEAGUE_OPS = 0.720

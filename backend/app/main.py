@@ -4,6 +4,7 @@ from tempfile import NamedTemporaryFile
 import csv
 import io
 import os
+from typing import Literal
 
 from fastapi import Body, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,12 +15,19 @@ from .demo import demo_data
 from .mlb import fetch_player_snapshot
 from .optimizer import Candidate, RosterRules, optimize_roster
 from .salaries import MAX_SALARY_USD, load_salary_csv, salary_coverage
-from .storage import (get_scenario, latest_salaries, latest_snapshot, list_scenarios,
-                      save_salaries, save_scenario, save_snapshot)
-from .value import project_values
+from .storage import (delete_demo, get_scenario, has_live_snapshot, latest_salaries, latest_snapshot,
+                      list_scenarios, save_salaries, save_scenario, save_snapshot, seasons_with_data)
+from .domain import SalaryRecord
+from .value import MODEL_VERSION, project_values
 
 
 DEFAULT_DB = Path(__file__).resolve().parents[2] / "data" / "roster.db"
+
+
+def default_db_path() -> Path:
+    """`ROSTER_DB` lets tests and experiments use their own database instead of data/roster.db."""
+    override = os.environ.get("ROSTER_DB")
+    return Path(override) if override else DEFAULT_DB
 
 
 TEAM_ABBREV = {
@@ -104,9 +112,11 @@ def _candidates(snapshot, salaries):
     return candidates, values
 
 
-def create_app(db_path: Path = DEFAULT_DB) -> FastAPI:
+def create_app(db_path: Path | None = None) -> FastAPI:
+    db_path = db_path or default_db_path()
     app = FastAPI(title="Roster Lab API")
-    app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    # Local-only app: any localhost port may call it (dev server, preview, e2e on its own port).
+    app.add_middleware(CORSMiddleware, allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
                        allow_methods=["*"], allow_headers=["*"])
 
     @app.get("/api/status")
@@ -120,15 +130,27 @@ def create_app(db_path: Path = DEFAULT_DB) -> FastAPI:
                 "players": len(latest[1].players) if latest else 0,
                 "priced_players": coverage.priced_count if coverage else 0,
                 "is_demo": bool(latest and latest[2]),
-                "model_version": "war-proxy-v1"}
+                "model_version": MODEL_VERSION}
+
+    @app.get("/api/seasons")
+    def seasons():
+        return seasons_with_data(db_path)
 
     @app.post("/api/demo/seed")
     def seed_demo():
         snapshot, salaries = demo_data()
+        if has_live_snapshot(db_path, snapshot.season):
+            raise HTTPException(409, detail={"code": "live_data_present",
+                                             "message": "Live player data is loaded; demo data would hide it."})
         snapshot_id = save_snapshot(db_path, snapshot, is_demo=True)
         salary_id = save_salaries(db_path, 2026, salaries, is_demo=True)
         return {"snapshot_id": snapshot_id, "salary_id": salary_id, "players": len(snapshot.players),
                 "message": "Fictional demo data loaded"}
+
+    @app.delete("/api/demo")
+    def exit_demo():
+        delete_demo(db_path)
+        return {"message": "Demo data removed"}
 
     @app.post("/api/refresh/mlb")
     def refresh_mlb(season: int = 2026):
@@ -140,10 +162,16 @@ def create_app(db_path: Path = DEFAULT_DB) -> FastAPI:
         except (httpx.HTTPError, ValueError) as exc:
             raise HTTPException(502, detail={"code": "refresh_failed", "message": str(exc)}) from exc
         identifier = save_snapshot(db_path, snapshot)
+        delete_demo(db_path)  # live data supersedes any fictional data
         return {"snapshot_id": identifier, "players": len(snapshot.players), "fetched_at": snapshot.fetched_at}
 
     @app.post("/api/salaries/import")
-    def import_salaries(season: int, csv_text: str = Body(media_type="text/csv")):
+    def import_salaries(season: int, csv_text: str = Body(media_type="text/csv"),
+                        mode: Literal["merge", "replace"] = "merge"):
+        current = latest_snapshot(db_path, season)
+        if current and current[2]:
+            raise HTTPException(409, detail={"code": "demo_active",
+                                             "message": "Exit demo mode before importing real salaries."})
         with NamedTemporaryFile(mode="w", suffix=".csv", encoding="utf-8", delete=False) as file:
             file.write(csv_text)
             temp_path = Path(file.name)
@@ -156,8 +184,17 @@ def create_app(db_path: Path = DEFAULT_DB) -> FastAPI:
         accepted = [record for record in records if record.season == season]
         if not accepted:
             raise HTTPException(422, detail={"code": "no_salaries", "message": "No valid salaries for this season"})
-        identifier = save_salaries(db_path, season, accepted)
-        return {"salary_id": identifier, "accepted": len(accepted), "issues": [asdict(issue) for issue in issues]}
+        if mode == "merge":
+            # New rows win per player; everything else already on file is kept.
+            existing = latest_salaries(db_path, season)
+            kept = {record.player_id: record for record in existing[1]} if existing and not existing[2] else {}
+            kept.update({record.player_id: record for record in accepted})
+            accepted_all: list[SalaryRecord] = list(kept.values())
+        else:
+            accepted_all = accepted
+        identifier = save_salaries(db_path, season, accepted_all)
+        return {"salary_id": identifier, "accepted": len(accepted), "total": len(accepted_all), "mode": mode,
+                "issues": [asdict(issue) for issue in issues]}
 
     @app.get("/api/salaries/template")
     def salary_template(season: int = 2026):
@@ -287,7 +324,7 @@ def create_app(db_path: Path = DEFAULT_DB) -> FastAPI:
         payload = {"season": request.season, "cap_usd": request.cap_usd, "locked_ids": request.locked_ids,
                    "excluded_ids": request.excluded_ids, "roster": roster, "alternatives": alternatives,
                    "is_demo": is_demo,
-                   "model_version": "war-proxy-v1", "snapshot_at": snapshot.fetched_at.isoformat(),
+                   "model_version": MODEL_VERSION, "snapshot_at": snapshot.fetched_at.isoformat(),
                    "mlb_source_urls": snapshot.source_urls,
                    "salary_coverage": {"priced_count": coverage.priced_count,
                                        "total_players": len(snapshot.players),
