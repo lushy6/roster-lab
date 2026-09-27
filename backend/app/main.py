@@ -4,6 +4,7 @@ from tempfile import NamedTemporaryFile
 import csv
 import io
 import os
+from time import perf_counter
 from typing import Literal
 
 from fastapi import Body, FastAPI, HTTPException, Response
@@ -22,6 +23,7 @@ from .value import MODEL_VERSION, project_values
 
 
 DEFAULT_DB = Path(__file__).resolve().parents[2] / "data" / "roster.db"
+SCENARIO_SOLVE_BUDGET_SECONDS = 20.0
 
 
 def default_db_path() -> Path:
@@ -284,8 +286,10 @@ def create_app(db_path: Path | None = None) -> FastAPI:
             raise HTTPException(422, detail={"code": "unknown_locked_player", "message": "A locked player has no salary or is outside this season"})
         if set(request.excluded_ids) - known_ids:
             raise HTTPException(422, detail={"code": "unknown_excluded_player", "message": "An excluded player has no salary or is outside this season"})
+        solve_deadline = perf_counter() + SCENARIO_SOLVE_BUDGET_SECONDS
         result = optimize_roster(candidates, RosterRules(), request.cap_usd,
-                                 set(request.locked_ids), set(request.excluded_ids))
+                                 set(request.locked_ids), set(request.excluded_ids),
+                                 deadline=solve_deadline)
         if result.status == "timeout":
             raise HTTPException(503, detail={"code": "solver_timeout", "message": result.reason})
         if result.status == "infeasible":
@@ -312,24 +316,41 @@ def create_app(db_path: Path | None = None) -> FastAPI:
                 pick["team"] = "Free Agent"
             pick["stats"] = stats
         alternatives = []
+        alternatives_truncated = False
         primary_ids = {pick["player_id"] for pick in roster["picks"]}
         locked_ids = set(request.locked_ids)
         avoid_ids = primary_ids - locked_ids
         for alt_cap in (round(request.cap_usd * 0.9), round(request.cap_usd * 1.1)):
+            if perf_counter() >= solve_deadline:
+                alternatives_truncated = True
+                break
             alt = optimize_roster(candidates, RosterRules(), alt_cap,
                                   locked_ids, set(request.excluded_ids),
-                                  avoid_ids=avoid_ids)
+                                  avoid_ids=avoid_ids, deadline=solve_deadline)
+            if alt.status == "timeout":
+                alternatives_truncated = True
+                break
             distinct = bool(avoid_ids) and alt.ok
-            if not distinct:
+            cap_cannot_fit_roster = (alt.status == "infeasible" and alt.code == "constraints"
+                                     and alt.minimum_feasible_salary is not None
+                                     and alt.minimum_feasible_salary > alt_cap)
+            if not distinct and avoid_ids and not cap_cannot_fit_roster:
+                if perf_counter() >= solve_deadline:
+                    alternatives_truncated = True
+                    break
                 alt = optimize_roster(candidates, RosterRules(), alt_cap,
-                                      locked_ids, set(request.excluded_ids))
+                                      locked_ids, set(request.excluded_ids),
+                                      deadline=solve_deadline)
+                if alt.status == "timeout":
+                    alternatives_truncated = True
+                    break
             if alt.ok:
                 alternatives.append({"cap_usd": alt_cap, "roster": asdict(alt),
                                      "distinct_from_primary": distinct})
         coverage = salary_coverage(set(snapshot.players), salaries, request.season)
         payload = {"season": request.season, "cap_usd": request.cap_usd, "locked_ids": request.locked_ids,
                    "excluded_ids": request.excluded_ids, "roster": roster, "alternatives": alternatives,
-                   "is_demo": is_demo,
+                   "alternatives_truncated": alternatives_truncated, "is_demo": is_demo,
                    "model_version": MODEL_VERSION, "snapshot_at": snapshot.fetched_at.isoformat(),
                    "mlb_source_urls": snapshot.source_urls,
                    "salary_coverage": {"priced_count": coverage.priced_count,

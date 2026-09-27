@@ -157,3 +157,56 @@ def test_reopened_scenarios_use_the_current_headshot_url(tmp_path):
     for pick in picks:
         assert pick["headshot_url"].startswith("https://img.mlbstatic.com/mlb-photos/image/upload/")
         assert f"/people/{pick['player_id']}/headshot/67/current" in pick["headshot_url"]
+
+def test_infeasible_alternative_avoids_redundant_re_solve(tmp_path, monkeypatch):
+    from app import optimizer
+
+    original_solve = optimizer._solve
+    calls = []
+
+    def counted_solve(*args, **kwargs):
+        calls.append((args[2], kwargs.get("avoid_ids"), kwargs.get("minimize_cost", False)))
+        return original_solve(*args, **kwargs)
+
+    monkeypatch.setattr(optimizer, "_solve", counted_solve)
+    client = TestClient(create_app(tmp_path / "test.db"))
+    assert client.post("/api/demo/seed").status_code == 200
+
+    response = client.post("/api/scenarios", json={"season": 2026, "cap_usd": 114_200_000})
+
+    assert response.status_code == 200, response.text
+    assert len(calls) <= 4
+    body = response.json()
+    assert [alternative["cap_usd"] for alternative in body["alternatives"]] == [125_620_000]
+    assert body["alternatives_truncated"] is False
+
+
+def test_scenario_solver_deadline_truncates_slow_alternatives(tmp_path, monkeypatch):
+    from time import perf_counter, sleep
+    from app import main as main_module
+    from app import optimizer
+
+    original_solve = optimizer._solve
+    calls = []
+
+    def delayed_solve(*args, **kwargs):
+        calls.append(kwargs.get("deadline"))
+        deadline = kwargs.get("deadline")
+        remaining = max(0.0, deadline - perf_counter()) if deadline is not None else float("inf")
+        sleep(min(0.03, remaining))
+        return original_solve(*args, **kwargs)
+
+    monkeypatch.setattr(main_module, "SCENARIO_SOLVE_BUDGET_SECONDS", 0.08, raising=False)
+    monkeypatch.setattr(optimizer, "SOLVER_SECONDS", 0.05)
+    monkeypatch.setattr(optimizer, "_solve", delayed_solve)
+    client = TestClient(create_app(tmp_path / "test.db"))
+    assert client.post("/api/demo/seed").status_code == 200
+
+    started = perf_counter()
+    response = client.post("/api/scenarios", json={"season": 2026, "cap_usd": 150_000_000})
+    elapsed = perf_counter() - started
+
+    assert response.status_code == 200, response.text
+    assert elapsed < 0.5
+    assert len(calls) <= 3
+    assert response.json()["alternatives_truncated"] is True

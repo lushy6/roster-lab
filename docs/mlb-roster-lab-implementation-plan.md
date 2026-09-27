@@ -153,3 +153,48 @@ def test_projection_uses_only_seasons_before_target(player_factory, snapshot_fac
 ## Next build phases
 
 After the roster lab is stable, write separate specs and plans for contract accounting, acquisition rules, and season simulation. Each phase should reuse player IDs, snapshots, scenario storage, and the rules engine defined here.
+
+## Review findings and hardening phase (added 2026-09-27)
+
+A static review on 2026-09-27 ran no tests, servers or builds. Everything above is kept as the record of completed work. This section adds findings and the work they imply, to do before the "Next build phases" specs. Tasks are listed from most to least critical.
+
+| ID | Severity | Type | Location | Finding |
+|---|---|---|---|---|
+| RL-1 | Low | Confirmed | `backend/app/value.py:60`, `:64` | `inningsPitched` from the MLB Stats API uses baseball thirds notation ("180.2" means 180⅔ IP), but `_number()` parses it as a decimal. Weighted IP, projected IP, the ERA regression weight and pitching WAR are all slightly understated (up to 0.67 IP per season row). The sibling `mlb_predictor/mlbbet/data/pitcher_logs.py` documents this exact trap and uses `outs` instead. |
+| RL-2 | Medium | Risk (latency and reliability) | `backend/app/main.py:318-330`, `optimizer.py:176-189` | One `POST /api/scenarios` can run up to seven 15-second CP-SAT solves synchronously: the primary, a cheapest-roster fallback, and for each alternative cap an avoid-solve, a plain re-solve and possibly its own fallback. The worst case is about 105 s on a request thread, and an infeasible 90% cap always triggers the extra re-solve. |
+| RL-3 | Medium | Risk (performance; needs a timing check) | `backend/app/storage.py:121-136` | `latest_snapshot` loads and `json.loads` the full league snapshot (all players × 2 seasons of hitting, pitching and fielding) on **every** `/api/status`, `/api/players` (typeahead) and `/api/coverage` request. `data/roster.db` is about 27 MB. |
+| RL-4 | Low | Confirmed | `backend/app/mlb.py:98-107` | The two-way heuristic sums `gamesStarted` across all fielding positions, **including P**. A starting pitcher with at least 60 PA and 20 IP counts as two-way without playing the field. That is rare since the universal DH, but it is not the intended rule. |
+| RL-5 | Low | Risk | `backend/app/main.py:124` | CORS allows any `localhost` origin with every method, and there is no request-size limit on `POST /api/salaries/import`. This is acceptable for a local-only app; revisit if it is ever hosted. |
+
+### Task 7: Bounded scenario builds (RL-2)
+
+- Skip the plain re-solve when the avoid-solve failed as `infeasible` because of the cap (it cannot succeed either). Run the alternatives only after the primary succeeds, with a shared time budget of about 20 s. Return the alternatives that finished, and flag `alternatives_truncated`.
+- **Verify:** an API test with a solver stub counts solve calls (at most 4 on the infeasible-alternative path). A timing test with `SOLVER_SECONDS` patched low shows the endpoint respects the budget.
+
+**Status 2026-09-27:** Complete. A shared 20-second deadline covers all roster solves; the API reports truncated alternatives and skips a below-minimum duplicate solve. Verified: 4 solves at most on the infeasible-alternative path, deadline regression, backend 75 passed, frontend lint/typecheck/unit/e2e green.
+
+### Task 8: Snapshot read path (RL-3)
+
+- Cache the parsed latest snapshot in process, keyed on `(snapshot id, season)`, or store the players in a table and query just the needed columns. Measure first: record p50 and p95 for `/api/players?q=...` against the current `roster.db`.
+- **Verify:** after the change, typeahead p95 is under 100 ms on the same database. A refresh or import invalidates the cache (test).
+
+### Task 9: Correct innings parsing (RL-1)
+
+- Parse `inningsPitched` as `whole + tenths/3`, or read `outs` when present. Use one helper in both `value.py` and `_candidates`.
+- **Verify:** a unit test that `"180.2"` gives 180.667 IP. `test_value.py` golden numbers are updated with a note, and `MODEL_VERSION` is bumped to `war-proxy-v3`. Saved v2 scenarios keep their stored numbers.
+
+### Task 10: Two-way rule (RL-4)
+
+- Exclude position `P` rows from `recent_fielding_starts`.
+- **Verify:** a fixture pitcher with 70 PA, 150 IP and 30 starts at P is not two-way. The existing two-way fixture still is.
+
+### Sequencing
+
+Tasks are ordered from most to least critical. Tasks 7 and 8 (the two Medium risks) are independent. Land them before the contract-accounting spec, since those scenarios will solve more often; measure Task 8's baseline first. Task 9 changes values and bumps the model version to `war-proxy-v3`, so ship it as its own release with updated golden numbers. Task 10 is small and can ride along with Task 9. RL-5 needs no work while the app stays local-only.
+
+### Validation (documented only; not run in this review)
+
+```powershell
+cd backend; ..\.venv\Scripts\python.exe -m pytest
+cd ..\frontend; npm run lint; npm run typecheck; npm run test:unit; npm run test:e2e
+```
