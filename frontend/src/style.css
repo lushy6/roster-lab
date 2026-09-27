@@ -359,33 +359,44 @@ a { color: inherit; }
 .lg-field { position: relative; background: #0c141c; overflow: hidden; padding: 18px 14px 14px; }
 .lg-field::before { content: ''; position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 28%, rgba(255,255,255,0.055) 0%, rgba(255,255,255,0.018) 42%, transparent 72%); pointer-events: none; }
 .lg-svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; opacity: 1; }
-.lg-grid { position: relative; display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; max-width: 720px; margin: 0 auto; z-index: 1; }
+/* Lineup cards read like a baseball card: the full 2:3 MLB portrait on the left, facts on the right.
+   The grid follows the field's own width, so a card never gets too narrow for its four stats. */
+.lg-field { container-type: inline-size; }
+.lg-grid { position: relative; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; max-width: 900px; margin: 0 auto; z-index: 1; }
+@container (max-width: 800px) { .lg-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@container (max-width: 500px) { .lg-grid { grid-template-columns: minmax(0, 1fr); } }
 .lg-card {
+  display: grid; grid-template-columns: 96px minmax(0, 1fr);
   background: rgba(255,255,255,0.055); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255,255,255,0.10); border-radius: 12px; overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.10); border-radius: 10px; overflow: hidden;
   box-shadow: 0 1px 3px rgba(0,0,0,.2), 0 4px 16px rgba(0,0,0,.18);
   transition: border-color 180ms var(--ease-out), transform 180ms var(--ease-out), box-shadow 180ms var(--ease-out);
 }
-.tabular-nums { font-variant-numeric: tabular-nums; }
-.lg-photo-wrap { position: relative; height: 98px; background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02)); overflow: hidden; }
-.lg-photo-wrap img:not(.lg-team) { width: 100%; height: 98px; object-fit: cover; object-position: 50% 12%; display: block; transform: scale(1.04); transform-origin: top center; }
-.lg-fallback { position: absolute; inset: 0; display: grid; place-items: center; background: linear-gradient(135deg, #1a2e42, #0f1e2b); color: #e6eef3; font-family: 'Barlow Condensed', sans-serif; font-size: 22px; font-weight: 800; letter-spacing: .06em; }
-.lg-team { position: absolute; left: 7px; bottom: 7px; width: 24px; height: 24px; background: #fff; border-radius: 50%; padding: 2px; border: 1px solid rgba(0,0,0,.08); box-shadow: 0 2px 8px rgba(0,0,0,.22); object-fit: contain; }
-.lg-slot { position: absolute; right: 8px; top: 8px; background: rgba(0,0,0,0.40); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); color: #fff; font-family: 'Barlow Condensed', sans-serif; font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 999px; letter-spacing: .08em; border: 1px solid rgba(255,255,255,0.10); box-shadow: 0 1px 6px rgba(0,0,0,.22); line-height: 1.6; }
-.lg-info { padding: 9px 10px 10px; display: grid; gap: 3px; }
-.lg-name { font-size: 12px; font-weight: 700; line-height: 1.2; color: #f8fafc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.lg-teamline { font-size: 11px; color: #d4d4d8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } /* zinc-300 */
-.lg-stats { font-size: 11px; color: #e4e4e7; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 6px; } /* zinc-300/200 for numbers */
-.lg-stats .lg-dot { width: 2px; height: 2px; border-radius: 50%; background: rgba(255,255,255,0.22); display: inline-block; flex-shrink: 0; }
-.lg-stats.lg-muted { color: #6b8794; font-style: italic; }
+/* #8b8f94 matches MLB's studio backdrop, so the frame shows no seam while the photo loads. */
+.lg-photo-wrap { position: relative; aspect-ratio: 2 / 3; background: #8b8f94; overflow: hidden; }
+.lg-photo-wrap img:not(.lg-team) { width: 100%; height: 100%; object-fit: cover; object-position: 50% 0; display: block; }
+.lg-fallback { position: absolute; inset: 0; display: grid; place-items: center; background: linear-gradient(135deg, #1a2e42, #0f1e2b); color: #e6eef3; font-family: 'Barlow Condensed', sans-serif; font-size: 26px; font-weight: 800; letter-spacing: .06em; }
+.lg-team { position: absolute; left: 6px; bottom: 6px; width: 24px; height: 24px; background: #fff; border-radius: 50%; padding: 2px; border: 1px solid rgba(0,0,0,.08); box-shadow: 0 2px 8px rgba(0,0,0,.22); object-fit: contain; }
+.lg-team-fa { position: absolute; left: 6px; bottom: 6px; background: rgba(15,30,43,0.72); color: #e6eef3; border: 1px solid rgba(255,255,255,0.14); font-family: 'Barlow Condensed', sans-serif; font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 6px; letter-spacing: .06em; }
+.lg-info { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 10px 12px 10px; }
+.lg-nameline { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+.lg-name { min-width: 0; font-family: 'Barlow Condensed', sans-serif; font-size: 21px; font-weight: 700; line-height: 1.1; letter-spacing: .005em; color: #f8fafc; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow-wrap: anywhere; }
+.lg-slot { margin-left: auto; flex-shrink: 0; color: #fff; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.14); border-radius: 999px; padding: 0 8px; font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: .06em; line-height: 1.6; }
+.lg-teamline { display: flex; align-items: baseline; gap: 10px; min-width: 0; font-size: 12px; color: #b8c4cc; white-space: nowrap; }
+.lg-abbrev { font-weight: 600; color: #e6eef3; letter-spacing: .02em; }
+.lg-fa { color: #8da3b0; font-weight: 600; }
+.lg-na { color: #8da3b0; font-style: italic; }
+.lg-war { margin-left: auto; font-family: 'Barlow Condensed', sans-serif; font-size: 17px; font-weight: 700; line-height: 1; color: #fff; }
+.lg-war small { margin-left: 2px; font-size: 11px; font-weight: 600; color: #8da3b0; letter-spacing: .04em; }
+.lg-stats { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 4px; margin: auto 0 0; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.08); }
+.lg-stats div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.lg-stats dd { margin: 0; font-size: 13px; font-weight: 600; line-height: 1.1; color: #f4f4f5; }
+.lg-stats dt { font-size: 10px; font-weight: 600; letter-spacing: .06em; color: #8da3b0; }
+.lg-muted { color: #71717a; }
+.lg-stats-pending { margin: auto 0 0; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.08); font-size: 11px; color: #8da3b0; }
 .lg-legend { padding: 9px 14px; font-size: 10px; color: #6b8794; background: #0f1e2b; border-top: 1px solid rgba(255,255,255,0.06); display: flex; align-items: center; gap: 6px; letter-spacing: .01em; }
 .lg-legend-dot { width: 5px; height: 5px; border-radius: 50%; background: #c4363f; display: inline-block; flex-shrink: 0; }
 .lg-legend-muted { color: #8da3b0; }
-.lg-team-fa { position: absolute; left: 7px; bottom: 7px; background: rgba(113,113,122,0.18); color: #a1a1aa; border: 1px solid rgba(255,255,255,0.10); font-family: 'JetBrains Mono', monospace; font-size: 9px; font-weight: 700; padding: 3px 6px; border-radius: 6px; letter-spacing: .06em; backdrop-filter: blur(6px); }
-.lg-fa { color: #71717a; }
-.lg-na { color: #71717a; font-style: italic; }
-.lg-label { color: #a1a1aa; font-size: 9px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; margin-left: 2px; } /* zinc-400 */
-.lg-muted { color: #a1a1aa; }
 .lg-empty { min-height: 1px; }
 
 .skeleton { background: linear-gradient(90deg, #e6ecef 25%, #edf2f4 37%, #e6ecef 63%); background-size: 400% 100%; animation: shimmer 1.2s ease-in-out infinite; border-radius: 6px; }
@@ -407,5 +418,4 @@ a { color: inherit; }
   .roster-groups { padding: 4px 14px 18px; } .player-row { grid-template-columns: 38px minmax(0,1fr) 68px 68px; gap: 6px; font-size: 12px; } .player-war small { display: none; }
   .source-grid { grid-template-columns: 1fr; gap: 0; } .source-section ul { columns: 1; }
   .site-footer { padding: 18px 16px; flex-direction: column; } .empty-result { min-height: 320px; padding: 32px 20px; }
-  .lg-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; } .lg-photo-wrap { height: 88px; } .lg-photo-wrap img:not(.lg-team) { height: 88px; }
 }

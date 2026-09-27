@@ -8,37 +8,40 @@ function initials(name: string) {
   return name.split(' ').map(n=>n[0]).slice(0,2).join('').toUpperCase()
 }
 
-function StatLine({ pick }: { pick: Pick }) {
+// Baseball prints rate stats without the leading zero: .292, .948 (but 1.145 stays).
+const rate = (v: unknown) => {
+  if (v == null || v === 'null' || v === '') return null
+  const n = Number(v)
+  return Number.isFinite(n) ? n.toFixed(3).replace(/^0/, '') : null
+}
+const count = (v: unknown) => (v == null || v === 'null' || v === '' ? null : String(v))
+
+function StatGrid({ pick }: { pick: Pick }) {
   const s = pick.stats || {}
   const hasHitting = s.ops || s.avg || s.hr
   const hasPitching = s.era && s.era !== 'null'
-  if (hasPitching && !hasHitting) {
-    return (
-      <span className="lg-stats tabular-nums">
-        <span>{s.era ?? '—'} <span className="lg-label">ERA</span></span><span className="lg-dot" />
-        <span>{s.ip ?? '—'} <span className="lg-label">IP</span></span><span className="lg-dot" />
-        <span>{s.so ?? '—'} <span className="lg-label">SO</span></span>
-      </span>
-    )
+  const cells: [string, string | null][] = hasPitching && !hasHitting
+    ? [['ERA', count(s.era)], ['IP', count(s.ip)], ['SO', count(s.so)]]
+    : [['AVG', rate(s.avg)], ['OPS', rate(s.ops)], ['HR', count(s.hr)], ['PA', count(s.pa)]]
+  if (cells.every(([, value]) => value === null)) {
+    return <p className="lg-stats-pending">No stats from last season</p>
   }
-  const ops = s.ops && s.ops !== 'null' ? Number(s.ops).toFixed(3) : null
-  const avg = s.avg && s.avg !== 'null' ? Number(s.avg).toFixed(3).replace(/^0/,'') : null
-  const hr = s.hr ?? null
-  const pa = s.pa ?? null
-  if (!ops && !avg && !hr) return <span className="lg-stats lg-muted tabular-nums">— stats pending</span>
   return (
-    <span className="lg-stats tabular-nums">
-      {avg ? <><span>{avg}</span> <span className="lg-label">AVG</span></> : <span className="lg-muted">—</span>}<span className="lg-dot" />
-      {ops ? <><span>{ops}</span> <span className="lg-label">OPS</span></> : <span className="lg-muted">— OPS</span>}<span className="lg-dot" />
-      {hr !== null ? <><span>{hr}</span> <span className="lg-label">HR</span></> : <span className="lg-muted">— HR</span>}
-      {pa !== null ? <><span className="lg-dot" />{pa} <span className="lg-label">PA</span></> : null}
-    </span>
+    <dl className="lg-stats tabular-nums">
+      {cells.map(([label, value]) => (
+        <div key={label}>
+          <dd className={value === null ? 'lg-muted' : undefined}>{value ?? '—'}</dd>
+          <dt>{label}</dt>
+        </div>
+      ))}
+    </dl>
   )
 }
 
 function Headshot({ pick }: { pick: Pick }) {
   const primary = pick.headshot_url || ''
-  const espnFallback = `https://a.espncdn.com/combiner/i?img=/i/headshots/mlb/players/full/${pick.player_id}.png&h=96&w=96&scale=crop`
+  // Only reached if MLB's CDN is unreachable; MLB itself already falls back to a silhouette.
+  const espnFallback = `https://a.espncdn.com/combiner/i?img=/i/headshots/mlb/players/full/${pick.player_id}.png&h=240&w=240&scale=crop`
   const [src, setSrc] = useState(primary)
   const [triedEspn, setTriedEspn] = useState(false)
   const [failed, setFailed] = useState(false)
@@ -80,7 +83,6 @@ function Headshot({ pick }: { pick: Pick }) {
           onError={e => ((e.currentTarget as HTMLImageElement).style.display = 'none')}
         />
       )}
-      <span className="lg-slot">{pick.slot}</span>
     </div>
   )
 }
@@ -145,15 +147,16 @@ export default function LineupGraphic({ picks }: { picks: Pick[] }) {
               >
                 <Headshot pick={pick} />
                 <div className="lg-info">
-                  <strong className="lg-name">{pick.name}</strong>
-                  <span className="lg-teamline">
-                    <span className={pick.team_abbrev === 'FA' ? 'lg-fa' : ''}>{pick.team_abbrev || pick.team}</span>
-                    <span className="lg-dot" />
-                    <span className={isUnpriced ? 'lg-na' : ''}>{salaryLabel}</span>
-                    <span className="lg-dot" />
-                    <span className="tabular-nums">{pick.war.toFixed(1)} WAR</span>
-                  </span>
-                  <StatLine pick={pick} />
+                  <div className="lg-nameline">
+                    <strong className="lg-name" title={pick.name}>{pick.name}</strong>
+                    <span className="lg-slot">{pick.slot}</span>
+                  </div>
+                  <div className="lg-teamline">
+                    <span className={pick.team_abbrev === 'FA' ? 'lg-fa' : 'lg-abbrev'}>{pick.team_abbrev || pick.team}</span>
+                    <span className={isUnpriced ? 'lg-na' : 'tabular-nums'}>{salaryLabel}</span>
+                    <span className="lg-war tabular-nums">{pick.war.toFixed(1)} <small>WAR</small></span>
+                  </div>
+                  <StatGrid pick={pick} />
                 </div>
               </motion.div>
             )

@@ -129,3 +129,31 @@ def test_scenario_bench_picks_carry_their_slot_weight(tmp_path):
     picks = client.post("/api/scenarios", json={"season": 2026, "cap_usd": 150_000_000}).json()["roster"]["picks"]
     weights = {pick["slot"]: pick["weight"] for pick in picks}
     assert weights["BN1"] == 0.25 and weights["C2"] == 0.25 and weights["SP1"] == 1.0 and weights["RP1"] == 1.0
+
+
+def test_reopened_scenarios_use_the_current_headshot_url(tmp_path):
+    # Scenarios saved before 2026-09-27 stored MLB's 60x60 headshot, which upscaled blurry.
+    # The URL is a pure function of the player id, so reopening re-derives it.
+    import json
+    import sqlite3
+
+    db_path = tmp_path / "test.db"
+    client = TestClient(create_app(db_path))
+    client.post("/api/demo/seed")
+    made = client.post("/api/scenarios", json={"season": 2026, "cap_usd": 150_000_000,
+                                               "locked_ids": [], "excluded_ids": []}).json()
+    with sqlite3.connect(db_path) as db:
+        payload = json.loads(db.execute("SELECT payload FROM scenarios WHERE id=?", (made["id"],)).fetchone()[0])
+        rosters = [payload["roster"], *(alt["roster"] for alt in payload["alternatives"])]
+        for pick in (pick for roster in rosters for pick in roster["picks"]):
+            pick["headshot_url"] = f"https://content.mlb.com/images/headshots/current/60x60/{pick['player_id']}@2x.png"
+        db.execute("UPDATE scenarios SET payload=? WHERE id=?", (json.dumps(payload), made["id"]))
+
+    reopened = client.get(f"/api/scenarios/{made['id']}").json()
+
+    rosters = [reopened["roster"], *(alt["roster"] for alt in reopened["alternatives"])]
+    picks = [pick for roster in rosters for pick in roster["picks"]]
+    assert picks
+    for pick in picks:
+        assert pick["headshot_url"].startswith("https://img.mlbstatic.com/mlb-photos/image/upload/")
+        assert f"/people/{pick['player_id']}/headshot/67/current" in pick["headshot_url"]

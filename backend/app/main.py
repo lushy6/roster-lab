@@ -42,8 +42,13 @@ TEAM_ABBREV = {
 }
 
 def _headshot_url(pid: int) -> str:
-    # verified 200 for 660271, 669127 at 60x60@2x; larger crops require hash and 400 on direct ID — use content CDN
-    return f"https://content.mlb.com/images/headshots/current/60x60/{pid}@2x.png"
+    # MLB's image CDN serves the 2:3 studio portrait at any width, and d_people:generic
+    # swaps in MLB's silhouette for players without a photo (verified 2026-09-27).
+    # w_240 is 2.5x the 96px-wide card portrait. The old 60x60@2x file upscaled blurry.
+    return (
+        "https://img.mlbstatic.com/mlb-photos/image/upload/"
+        f"d_people:generic:headshot:67:current.png/w_240,q_auto:best/v1/people/{pid}/headshot/67/current"
+    )
 
 def _team_logo_url(team: str) -> str | None:
     if not team or not team.strip():
@@ -348,6 +353,10 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         result = get_scenario(db_path, identifier)
         if result is None:
             raise HTTPException(404, detail={"code": "not_found", "message": "Scenario not found"})
+        # Presentation, not data: re-derive so scenarios saved with an older photo URL still render sharp.
+        rosters = [result.get("roster"), *(alt.get("roster") for alt in result.get("alternatives") or [])]
+        for pick in (pick for roster in rosters if roster for pick in roster.get("picks", [])):
+            pick["headshot_url"] = _headshot_url(pick["player_id"])
         return result
 
     return app

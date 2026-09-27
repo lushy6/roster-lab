@@ -91,5 +91,8 @@ test('team logos stay a small badge and never cover the player headshot', async 
   expect(badgeBox!.height).toBeLessThanOrEqual(32)
   const headshot = page.locator('.lg-photo-wrap > img:not(.lg-team)').first()
   await expect(headshot).toBeVisible()
-  expect((await headshot.boundingBox())!.width).toBeGreaterThan(100)
+  // MLB headshots are 2:3 portraits; a wide, short frame crops every face at the nose.
+  const photo = (await headshot.boundingBox())!
+  expect(photo.width).toBeGreaterThanOrEqual(90)
+  expect(photo.height / photo.width).toBeCloseTo(1.5, 1)
 })
