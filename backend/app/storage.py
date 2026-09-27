@@ -1,6 +1,7 @@
 from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import date, datetime
+from functools import lru_cache
 import json
 from pathlib import Path
 import sqlite3
@@ -75,6 +76,7 @@ def delete_demo(path: Path) -> None:
     with _session(path) as db:
         db.execute("DELETE FROM snapshots WHERE is_demo=1")
         db.execute("DELETE FROM salaries WHERE is_demo=1")
+    _invalidate_snapshot_cache()
 
 
 def save_demo(path: Path, snapshot: PlayerSnapshot, records: list[SalaryRecord]) -> tuple[str, str]:
@@ -89,6 +91,7 @@ def save_demo(path: Path, snapshot: PlayerSnapshot, records: list[SalaryRecord])
         _supersede_demo(db, snapshot.season)
         snapshot_id = _insert_snapshot(db, snapshot, is_demo=True)
         salary_id = _insert_salaries(db, snapshot.season, records, is_demo=True)
+    _invalidate_snapshot_cache()
     return snapshot_id, salary_id
 
 
@@ -115,15 +118,13 @@ def save_snapshot(path: Path, snapshot: PlayerSnapshot, is_demo: bool = False) -
     with _session(path) as db:
         if not is_demo:
             _supersede_demo(db, snapshot.season)  # live data replaces fictional data in the same transaction
-        return _insert_snapshot(db, snapshot, is_demo)
+        identifier = _insert_snapshot(db, snapshot, is_demo)
+    _invalidate_snapshot_cache()
+    return identifier
 
 
-def latest_snapshot(path: Path, season: int) -> tuple[str, PlayerSnapshot, bool] | None:
-    with _session(path) as db:
-        row = db.execute("SELECT * FROM snapshots WHERE season=? ORDER BY rowid DESC LIMIT 1", (season,)).fetchone()
-    if row is None:
-        return None
-    payload = json.loads(row["payload"])
+def _snapshot_from_payload(payload_json: str) -> PlayerSnapshot:
+    payload = json.loads(payload_json)
     players = {}
     for key, raw in payload["players"].items():
         raw["eligible_positions"] = set(raw["eligible_positions"])
@@ -131,9 +132,34 @@ def latest_snapshot(path: Path, season: int) -> tuple[str, PlayerSnapshot, bool]
         raw["pitching"] = {int(year): stat for year, stat in raw["pitching"].items()}
         raw["fielding"] = {int(year): stat for year, stat in raw["fielding"].items()}
         players[int(key)] = Player(**raw)
-    snapshot = PlayerSnapshot(payload["season"], datetime.fromisoformat(payload["fetched_at"]),
-                              payload["source_urls"], players, payload["adapter_version"])
-    return row["id"], snapshot, bool(row["is_demo"])
+    return PlayerSnapshot(payload["season"], datetime.fromisoformat(payload["fetched_at"]),
+                          payload["source_urls"], players, payload["adapter_version"])
+
+
+@lru_cache(maxsize=8)
+def _cached_snapshot(path_key: str, identifier: str, season: int) -> PlayerSnapshot | None:
+    with _session(Path(path_key)) as db:
+        row = db.execute("SELECT payload FROM snapshots WHERE id=? AND season=?",
+                         (identifier, season)).fetchone()
+    return _snapshot_from_payload(row["payload"]) if row is not None else None
+
+
+def _invalidate_snapshot_cache() -> None:
+    _cached_snapshot.cache_clear()
+
+
+def latest_snapshot(path: Path, season: int) -> tuple[str, PlayerSnapshot, bool] | None:
+    path_key = str(path.resolve())
+    for _ in range(2):
+        with _session(path) as db:
+            row = db.execute("SELECT id, is_demo FROM snapshots WHERE season=? ORDER BY rowid DESC LIMIT 1",
+                             (season,)).fetchone()
+        if row is None:
+            return None
+        snapshot = _cached_snapshot(path_key, row["id"], season)
+        if snapshot is not None:
+            return row["id"], snapshot, bool(row["is_demo"])
+    return None
 
 
 def _insert_salaries(db: sqlite3.Connection, season: int, records: list[SalaryRecord], is_demo: bool) -> str:
@@ -147,7 +173,9 @@ def _insert_salaries(db: sqlite3.Connection, season: int, records: list[SalaryRe
 
 def save_salaries(path: Path, season: int, records: list[SalaryRecord], is_demo: bool = False) -> str:
     with _session(path) as db:
-        return _insert_salaries(db, season, records, is_demo)
+        identifier = _insert_salaries(db, season, records, is_demo)
+    _invalidate_snapshot_cache()
+    return identifier
 
 
 def latest_salaries(path: Path, season: int) -> tuple[str, list[SalaryRecord], bool] | None:

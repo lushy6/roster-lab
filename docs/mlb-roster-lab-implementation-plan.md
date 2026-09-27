@@ -178,6 +178,8 @@ A static review on 2026-09-27 ran no tests, servers or builds. Everything above 
 - Cache the parsed latest snapshot in process, keyed on `(snapshot id, season)`, or store the players in a table and query just the needed columns. Measure first: record p50 and p95 for `/api/players?q=...` against the current `roster.db`.
 - **Verify:** after the change, typeahead p95 is under 100 ms on the same database. A refresh or import invalidates the cache (test).
 
+**Status 2026-09-27:** Complete. Parsed snapshots use an eight-entry LRU keyed by resolved DB path, snapshot ID, and season; snapshot/salary writes invalidate it. Import/refresh invalidation regression passes. On the same 27.6 MB `data/roster.db`, warmed 50-request `/api/players?q=a` p50/p95 improved from 37.90/55.38 ms to 14.45/15.59 ms. Verified backend 76 passed; frontend lint/typecheck, Vitest 9, Playwright 7 passed.
+
 ### Task 9: Correct innings parsing (RL-1)
 
 - Parse `inningsPitched` as `whole + tenths/3`, or read `outs` when present. Use one helper in both `value.py` and `_candidates`.

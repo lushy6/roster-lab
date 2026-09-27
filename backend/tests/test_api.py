@@ -210,3 +210,33 @@ def test_scenario_solver_deadline_truncates_slow_alternatives(tmp_path, monkeypa
     assert elapsed < 0.5
     assert len(calls) <= 3
     assert response.json()["alternatives_truncated"] is True
+
+def test_snapshot_cache_is_reused_and_invalidated_on_import_and_refresh(tmp_path, monkeypatch):
+    from app import main as main_module
+    from app import storage
+
+    db_path = tmp_path / "test.db"
+    snapshot, salaries = demo_data()
+    storage.save_snapshot(db_path, snapshot)
+    storage.save_salaries(db_path, 2026, salaries)
+    original = storage.latest_snapshot(db_path, 2026)[1]
+    assert storage.latest_snapshot(db_path, 2026)[1] is original
+
+    player_id = salaries[0].player_id
+    csv_text = ("player_id,season,base_salary_usd,source_url,checked_at\n"
+                f"{player_id},2026,5000000,https://example.org/imported,2026-09-27\n")
+    client = TestClient(create_app(db_path))
+    imported = client.post("/api/salaries/import?season=2026", content=csv_text,
+                           headers={"content-type": "text/csv"})
+    assert imported.status_code == 200, imported.text
+    after_import = storage.latest_snapshot(db_path, 2026)[1]
+    assert after_import is not original
+
+    refreshed_snapshot, _ = demo_data()
+    monkeypatch.setattr(main_module, "fetch_player_snapshot", lambda season, http_client: refreshed_snapshot)
+    refreshed = client.post("/api/refresh/mlb?season=2026")
+    assert refreshed.status_code == 200, refreshed.text
+    current = storage.latest_snapshot(db_path, 2026)
+    assert current[0] == refreshed.json()["snapshot_id"]
+    assert current[1] is not after_import
+    assert storage.latest_snapshot(db_path, 2026)[1] is current[1]
