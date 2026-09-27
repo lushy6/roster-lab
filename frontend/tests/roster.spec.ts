@@ -96,3 +96,24 @@ test('team logos stay a small badge and never cover the player headshot', async 
   expect(photo.width).toBeGreaterThanOrEqual(90)
   expect(photo.height / photo.width).toBeCloseTo(1.5, 1)
 })
+
+test('long source URLs never make the page scroll sideways on a phone', async ({ page, request }) => {
+  test.setTimeout(90000)
+  await page.setViewportSize({ width: 390, height: 844 })
+  await seedDemo(request)
+  // Live scenarios list full MLB API URLs as link text; demo data has none, so add some.
+  const longUrl = 'https://statsapi.mlb.com/api/v1/sports/1/players?season=2026&hydrate=currentTeam,stats(group=[hitting,pitching],type=[season])'
+  await page.route('**/api/scenarios', async route => {
+    if (route.request().method() !== 'POST') return route.continue()
+    const response = await route.fetch()
+    const body = await response.json()
+    await route.fulfill({ response, json: { ...body, mlb_source_urls: [longUrl, `${longUrl}&page=2`] } })
+  })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Build roster' }).click()
+  await expect(page.getByRole('heading', { name: 'Your 26-player roster' })).toBeVisible({ timeout: 30000 })
+  await page.getByText('MLB snapshot sources').click()
+  await expect(page.getByRole('link', { name: longUrl, exact: true })).toBeVisible()
+  const widths = await page.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }))
+  expect(widths.page).toBeLessThanOrEqual(widths.viewport)
+})
