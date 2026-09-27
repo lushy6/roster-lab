@@ -4,6 +4,7 @@ import time
 import httpx
 
 from .domain import Player, PlayerSnapshot
+from .value import innings_pitched
 
 
 BASE = "https://statsapi.mlb.com/api/v1"
@@ -98,8 +99,7 @@ def fetch_player_snapshot(season: int, client: httpx.Client, *, fetched_at: date
     for player in players.values():
         recent_hitting_pa = sum(_as_float(stat.get("plateAppearances", 0))
                                 for stat in player.hitting.values())
-        recent_pitching_ip = sum(_as_float(stat.get("inningsPitched", 0))
-                                 for stat in player.pitching.values())
+        recent_pitching_ip = sum(innings_pitched(stat) for stat in player.pitching.values())
         recent_fielding_starts = sum(_as_int(stat.get("gamesStarted", 0))
                                      for rows in player.fielding.values() for row in rows
                                      for stat in [row.get("stat", {})])

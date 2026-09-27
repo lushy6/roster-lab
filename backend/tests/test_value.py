@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
 from app.domain import Player, PlayerSnapshot
-from app.value import project_values
+from app.value import innings_pitched, project_values
 
 
 def snapshot(player: Player) -> PlayerSnapshot:
@@ -73,9 +73,9 @@ def test_recent_season_still_outweighs_the_older_one():
     assert result[10].estimated_war > result[11].estimated_war
 
 
-def test_model_version_is_v2_after_the_weighting_change():
+def test_model_version_is_v3_after_innings_notation_fix():
     player = Player(10, "One", "Club", "1B", {"1B"}, hitting={2025: {"plateAppearances": 600, "ops": ".800"}})
-    assert project_values(snapshot(player), 2026)[10].model_version == "war-proxy-v2"
+    assert project_values(snapshot(player), 2026)[10].model_version == "war-proxy-v3"
 
 
 def _war(position: str = "1B", **history):
@@ -110,3 +110,11 @@ def test_zero_playing_time_pitching_rows_are_ignored_too():
 
 def test_input_seasons_leave_out_rows_without_playing_time():
     assert _war(hitting={2024: _pa(0), 2025: _pa(600)}).input_seasons == [2025]
+
+def test_pitching_golden_uses_baseball_thirds_not_decimal_ip():
+    # MLB's 180.2 means 180 innings plus two outs, or 180.667 IP; v3 updates this golden.
+    result = _war("P", pitching={2025: {"inningsPitched": "180.2", "era": "3.50"}})
+    assert round(innings_pitched("180.2"), 3) == 180.667
+    assert round(innings_pitched({"outs": 542}), 3) == 180.667
+    assert result.pitching_war == 3.108
+    assert result.model_version == "war-proxy-v3"

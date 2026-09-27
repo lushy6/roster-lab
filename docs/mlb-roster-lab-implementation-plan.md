@@ -185,6 +185,8 @@ A static review on 2026-09-27 ran no tests, servers or builds. Everything above 
 - Parse `inningsPitched` as `whole + tenths/3`, or read `outs` when present. Use one helper in both `value.py` and `_candidates`.
 - **Verify:** a unit test that `"180.2"` gives 180.667 IP. `test_value.py` golden numbers are updated with a note, and `MODEL_VERSION` is bumped to `war-proxy-v3`. Saved v2 scenarios keep their stored numbers.
 
+**Status 2026-09-27:** Complete. A shared innings parser converts baseball thirds (and reads `outs`) in value projection, candidate eligibility, and MLB ingestion. `MODEL_VERSION` is `war-proxy-v3`; the `180.2` IP golden is 180.667 and pitching WAR is 3.108. A stored v2 scenario retains its saved WAR. Verified backend 78 passed; frontend lint/typecheck, Vitest 9, Playwright 7 passed.
+
 ### Task 10: Two-way rule (RL-4)
 
 - Exclude position `P` rows from `recent_fielding_starts`.

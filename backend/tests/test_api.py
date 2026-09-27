@@ -240,3 +240,24 @@ def test_snapshot_cache_is_reused_and_invalidated_on_import_and_refresh(tmp_path
     assert current[0] == refreshed.json()["snapshot_id"]
     assert current[1] is not after_import
     assert storage.latest_snapshot(db_path, 2026)[1] is current[1]
+
+def test_saved_v2_scenario_keeps_its_stored_war_under_v3(tmp_path):
+    import json
+    import sqlite3
+
+    db_path = tmp_path / "test.db"
+    client = TestClient(create_app(db_path))
+    client.post("/api/demo/seed")
+    made = client.post("/api/scenarios", json={"season": 2026, "cap_usd": 150_000_000}).json()
+    legacy_war = 123.456
+    with sqlite3.connect(db_path) as db:
+        payload = json.loads(db.execute("SELECT payload FROM scenarios WHERE id=?", (made["id"],)).fetchone()[0])
+        payload["model_version"] = "war-proxy-v2"
+        payload["roster"]["total_war"] = legacy_war
+        db.execute("UPDATE scenarios SET payload=? WHERE id=?", (json.dumps(payload), made["id"]))
+
+    reopened = client.get(f"/api/scenarios/{made['id']}")
+
+    assert reopened.status_code == 200
+    assert reopened.json()["model_version"] == "war-proxy-v2"
+    assert reopened.json()["roster"]["total_war"] == legacy_war
