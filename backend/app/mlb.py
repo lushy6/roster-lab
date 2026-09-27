@@ -102,6 +102,7 @@ def fetch_player_snapshot(season: int, client: httpx.Client, *, fetched_at: date
         recent_pitching_ip = sum(innings_pitched(stat) for stat in player.pitching.values())
         recent_fielding_starts = sum(_as_int(stat.get("gamesStarted", 0))
                                      for rows in player.fielding.values() for row in rows
+                                     if row.get("position") != "P"
                                      for stat in [row.get("stat", {})])
         if recent_hitting_pa >= 60 and recent_pitching_ip >= 20 and recent_fielding_starts >= 20:
             player.is_two_way = True

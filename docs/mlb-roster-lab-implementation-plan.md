@@ -192,6 +192,8 @@ A static review on 2026-09-27 ran no tests, servers or builds. Everything above 
 - Exclude position `P` rows from `recent_fielding_starts`.
 - **Verify:** a fixture pitcher with 70 PA, 150 IP and 30 starts at P is not two-way. The existing two-way fixture still is.
 
+**Status 2026-09-27:** Complete. Starts at position P no longer qualify as fielding starts. The 70 PA/150 IP/30 pitcher-start fixture stays non-two-way, and the existing RF two-way fixture remains true. Verified backend 79 passed; frontend lint/typecheck, Vitest 9, Playwright 7 passed.
+
 ### Sequencing
 
 Tasks are ordered from most to least critical. Tasks 7 and 8 (the two Medium risks) are independent. Land them before the contract-accounting spec, since those scenarios will solve more often; measure Task 8's baseline first. Task 9 changes values and bumps the model version to `war-proxy-v3`, so ship it as its own release with updated golden numbers. Task 10 is small and can ride along with Task 9. RL-5 needs no work while the app stays local-only.

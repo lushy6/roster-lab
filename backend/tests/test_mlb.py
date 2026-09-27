@@ -110,3 +110,30 @@ def test_a_failing_teams_lookup_fails_the_refresh_instead_of_saving_teamless_pla
     import pytest
     with pytest.raises(httpx.HTTPStatusError):
         fetch_player_snapshot(2026, httpx.Client(transport=httpx.MockTransport(handler)))
+
+
+
+def test_pitcher_starts_at_p_do_not_qualify_as_two_way():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/teams"):
+            return httpx.Response(200, json={"teams": []})
+        if request.url.path.endswith("/players"):
+            return httpx.Response(200, json={"people": [{
+                "id": 11, "fullName": "Starting Pitcher", "primaryPosition": {"abbreviation": "P"},
+            }]})
+        group = request.url.params["group"]
+        if group == "hitting":
+            stat = {"plateAppearances": 70, "gamesPlayed": 30}
+        elif group == "pitching":
+            stat = {"inningsPitched": "150.0", "gamesStarted": 30, "gamesPlayed": 30}
+        else:
+            return httpx.Response(200, json={"stats": [{"splits": [{
+                "player": {"id": 11}, "position": {"abbreviation": "P"},
+                "stat": {"gamesStarted": 30},
+            }]}]})
+        return httpx.Response(200, json={"stats": [{"splits": [{"player": {"id": 11}, "stat": stat}]}]})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    snapshot = fetch_player_snapshot(2026, client)
+
+    assert snapshot.players[11].is_two_way is False
