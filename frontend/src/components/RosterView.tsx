@@ -76,9 +76,14 @@ export default function RosterView({ scenario }: { scenario: Scenario }) {
           </div>
         ))}
       </div>
-      {scenario.alternatives.length > 0 && (
+      {(scenario.alternatives.length > 0 || scenario.alternatives_truncated) && (
         <div className="compare">
           <h3>Compare budgets</h3>
+          {scenario.alternatives_truncated && (
+            <p className="compare-note" role="status">
+              Some alternative rosters were skipped to keep the build fast.
+            </p>
+          )}
           <div className="compare-list">
             {scenario.alternatives.map(alt => {
               const newCount = alt.roster.picks.filter(p => !primaryIds.has(p.player_id)).length

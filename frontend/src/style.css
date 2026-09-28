@@ -264,6 +264,7 @@ a { color: inherit; }
 @media (max-width: 860px) { .acquisition-grid { grid-template-columns: 1fr; } .diamond { grid-template-columns: 1fr 1fr; } }
 
 .compare { background: #f2f7f8; padding: 6px 24px 20px; border-top: 1px solid #dde8ec; }
+.compare-note { color: #5d7380; margin: 0 0 10px; font-size: 13px; }
 .compare-list { display: flex; flex-wrap: wrap; gap: 10px; }
 .compare-item {
   border: 1px solid #c4d5dc; background: #fff; min-width: 176px; flex: 1 1 176px; max-width: 240px; padding: 14px; display: grid; gap: 4px; font-size: 13px; border-radius: var(--radius-sm);
