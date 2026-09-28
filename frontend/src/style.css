@@ -265,6 +265,7 @@ a { color: inherit; }
 
 .compare { background: #f2f7f8; padding: 6px 24px 20px; border-top: 1px solid #dde8ec; }
 .compare-note { color: #5d7380; margin: 0 0 10px; font-size: 13px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .compare-list { display: flex; flex-wrap: wrap; gap: 10px; }
 .compare-item {
   border: 1px solid #c4d5dc; background: #fff; min-width: 176px; flex: 1 1 176px; max-width: 240px; padding: 14px; display: grid; gap: 4px; font-size: 13px; border-radius: var(--radius-sm);

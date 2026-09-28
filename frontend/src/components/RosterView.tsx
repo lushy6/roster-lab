@@ -2,6 +2,15 @@ import type { Pick, Scenario } from '../api'
 import { rosterToCsv } from '../csv'
 import LineupGraphic from './LineupGraphic'
 
+export const ALTERNATIVES_TRUNCATED_NOTICE = 'Some alternative rosters were skipped to keep the build fast.'
+
+// Screen readers only announce changes inside a live region that is already in the
+// DOM, so App keeps this mounted and the text goes empty while each build runs.
+export function AlternativesAnnouncer({ scenario, busy }: { scenario: Scenario | null; busy: boolean }) {
+  const text = !busy && scenario?.alternatives_truncated ? ALTERNATIVES_TRUNCATED_NOTICE : ''
+  return <p className="sr-only" role="status" aria-live="polite">{text}</p>
+}
+
 const money = (value: number) => `$${(value / 1_000_000).toFixed(1)}m`
 const warPerMillion = (war: number, salary: number) => salary > 0 ? (war / (salary / 1_000_000)).toFixed(2) : '—'
 const percent = (weight: number) => `${Math.round(weight * 100)}%`
@@ -80,9 +89,7 @@ export default function RosterView({ scenario }: { scenario: Scenario }) {
         <div className="compare">
           <h3>Compare budgets</h3>
           {scenario.alternatives_truncated && (
-            <p className="compare-note" role="status">
-              Some alternative rosters were skipped to keep the build fast.
-            </p>
+            <p className="compare-note">{ALTERNATIVES_TRUNCATED_NOTICE}</p>
           )}
           <div className="compare-list">
             {scenario.alternatives.map(alt => {

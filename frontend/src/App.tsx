@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Toaster, toast } from 'sonner'
 import { buildScenario, exitDemo, getScenario, getSeasons, getStatus, importSalaries, listScenarios, refreshMlb, salaryTemplateUrl, seedDemo, type SavedScenario, type Scenario, type Status } from './api'
 import ScenarioForm from './components/ScenarioForm'
-import RosterView from './components/RosterView'
+import RosterView, { AlternativesAnnouncer } from './components/RosterView'
 import SourceDetails from './components/SourceDetails'
 import CoverageDrawer from './components/CoverageDrawer'
 import DepthChart from './components/DepthChart'
@@ -157,6 +157,7 @@ export default function App() {
         </aside>
         <div className="results">
           {message && <div className="message" role="status">{message}</div>}
+          <AlternativesAnnouncer scenario={scenario} busy={busy} />
           {busy && !scenario && (
             <section className="roster-section" aria-hidden>
               <div className="roster-heading"><div><div className="skeleton" style={{ width: 200, height: 28 }} /><div className="skeleton" style={{ width: 260, height: 14, marginTop: 8 }} /></div><span className="skeleton" style={{ width: 110, height: 26, borderRadius: 999 }} /></div>

@@ -196,7 +196,7 @@ A static review on 2026-09-27 ran no tests, servers or builds. Everything above 
 
 ### Review follow-up (2026-09-27)
 
-**Status:** README now documents `war-proxy-v3`, baseball thirds notation and `outs`, and preservation of saved v2 scenario values. `Scenario.alternatives_truncated` is optional in the frontend type; the Compare budgets panel announces skipped alternatives with a status message even if none remain. Verified backend pytest (79 passed), frontend lint and typecheck, and Vitest (10 passed). E2E and remote CI were not run for this follow-up.
+**Status:** README now documents `war-proxy-v3`, baseball thirds notation and `outs`, and preservation of saved v2 scenario values. `Scenario.alternatives_truncated` is optional in the frontend type; the Compare budgets panel shows a skipped-alternatives note even if none remain. Screen-reader announcement comes from `AlternativesAnnouncer`, a `role="status"` region that App keeps mounted (the in-panel note mounted together with its text, which screen readers do not reliably announce); its text is empty while a build runs, so repeated truncated builds are announced again. Verified backend pytest (79 passed), frontend lint and typecheck, and Vitest (14 passed). E2E, remote CI and a real screen reader were not run for this follow-up.
 
 ### Sequencing
 
