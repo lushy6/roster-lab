@@ -14,10 +14,28 @@ def _number(value: object, default: float = 0.0) -> float:
         return default
 
 
+def innings_pitched(stat: object) -> float:
+    """Convert MLB innings notation to outs/3, accepting a stat row with ``outs`` too."""
+    if isinstance(stat, dict):
+        if stat.get("outs") is not None:
+            return _number(stat["outs"]) / 3
+        stat = stat.get("inningsPitched")
+    text = str(stat or "").strip().replace(",", "")
+    whole, separator, thirds = text.partition(".")
+    if separator and thirds in {"0", "1", "2"}:
+        try:
+            return float(whole) + int(thirds) / 3
+        except ValueError:
+            return 0.0
+    return _number(text)
+
+
 def _recent(history: dict[int, dict], target_season: int, playing_time_key: str) -> list[tuple[int, dict]]:
     """The two seasons before the target that have real playing time; an empty row counts as no row."""
+    playing_time = (innings_pitched if playing_time_key == "inningsPitched"
+                    else lambda stat: _number(stat.get(playing_time_key)))
     return [(year, history[year]) for year in (target_season - 2, target_season - 1)
-            if year in history and _number(history[year].get(playing_time_key)) > 0]
+            if year in history and playing_time(history[year]) > 0]
 
 
 def _weights(recent: list[tuple[int, dict]], target_season: int) -> dict[int, float]:
@@ -57,11 +75,11 @@ def _pitching(player: Player, target_season: int) -> tuple[float, float]:
     if not recent:
         return 0.0, 0.0
     weight = _weights(recent, target_season)
-    weighted_ip = sum(_number(s.get("inningsPitched")) * weight[year] for year, s in recent)
+    weighted_ip = sum(innings_pitched(s) * weight[year] for year, s in recent)
     projected_ip = min(200.0, weighted_ip)
     if projected_ip <= 0:
         return 0.0, 0.0
-    rate_numerator = sum(_number(s.get("era"), LEAGUE_ERA) * _number(s.get("inningsPitched")) * weight[year]
+    rate_numerator = sum(_number(s.get("era"), LEAGUE_ERA) * innings_pitched(s) * weight[year]
                          for year, s in recent)
     era = (rate_numerator + LEAGUE_ERA * 50) / (weighted_ip + 50)
     war = ((LEAGUE_ERA - era) * projected_ip / 9 / 10) + 2 * projected_ip / 180

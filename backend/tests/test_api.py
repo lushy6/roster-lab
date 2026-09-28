@@ -157,3 +157,107 @@ def test_reopened_scenarios_use_the_current_headshot_url(tmp_path):
     for pick in picks:
         assert pick["headshot_url"].startswith("https://img.mlbstatic.com/mlb-photos/image/upload/")
         assert f"/people/{pick['player_id']}/headshot/67/current" in pick["headshot_url"]
+
+def test_infeasible_alternative_avoids_redundant_re_solve(tmp_path, monkeypatch):
+    from app import optimizer
+
+    original_solve = optimizer._solve
+    calls = []
+
+    def counted_solve(*args, **kwargs):
+        calls.append((args[2], kwargs.get("avoid_ids"), kwargs.get("minimize_cost", False)))
+        return original_solve(*args, **kwargs)
+
+    monkeypatch.setattr(optimizer, "_solve", counted_solve)
+    client = TestClient(create_app(tmp_path / "test.db"))
+    assert client.post("/api/demo/seed").status_code == 200
+
+    response = client.post("/api/scenarios", json={"season": 2026, "cap_usd": 114_200_000})
+
+    assert response.status_code == 200, response.text
+    assert len(calls) <= 4
+    body = response.json()
+    assert [alternative["cap_usd"] for alternative in body["alternatives"]] == [125_620_000]
+    assert body["alternatives_truncated"] is False
+
+
+def test_scenario_solver_deadline_truncates_slow_alternatives(tmp_path, monkeypatch):
+    from time import perf_counter, sleep
+    from app import main as main_module
+    from app import optimizer
+
+    original_solve = optimizer._solve
+    calls = []
+
+    def delayed_solve(*args, **kwargs):
+        calls.append(kwargs.get("deadline"))
+        deadline = kwargs.get("deadline")
+        remaining = max(0.0, deadline - perf_counter()) if deadline is not None else float("inf")
+        sleep(min(0.03, remaining))
+        return original_solve(*args, **kwargs)
+
+    monkeypatch.setattr(main_module, "SCENARIO_SOLVE_BUDGET_SECONDS", 0.08, raising=False)
+    monkeypatch.setattr(optimizer, "SOLVER_SECONDS", 0.05)
+    monkeypatch.setattr(optimizer, "_solve", delayed_solve)
+    client = TestClient(create_app(tmp_path / "test.db"))
+    assert client.post("/api/demo/seed").status_code == 200
+
+    started = perf_counter()
+    response = client.post("/api/scenarios", json={"season": 2026, "cap_usd": 150_000_000})
+    elapsed = perf_counter() - started
+
+    assert response.status_code == 200, response.text
+    assert elapsed < 0.5
+    assert len(calls) <= 3
+    assert response.json()["alternatives_truncated"] is True
+
+def test_snapshot_cache_is_reused_and_invalidated_on_import_and_refresh(tmp_path, monkeypatch):
+    from app import main as main_module
+    from app import storage
+
+    db_path = tmp_path / "test.db"
+    snapshot, salaries = demo_data()
+    storage.save_snapshot(db_path, snapshot)
+    storage.save_salaries(db_path, 2026, salaries)
+    original = storage.latest_snapshot(db_path, 2026)[1]
+    assert storage.latest_snapshot(db_path, 2026)[1] is original
+
+    player_id = salaries[0].player_id
+    csv_text = ("player_id,season,base_salary_usd,source_url,checked_at\n"
+                f"{player_id},2026,5000000,https://example.org/imported,2026-09-27\n")
+    client = TestClient(create_app(db_path))
+    imported = client.post("/api/salaries/import?season=2026", content=csv_text,
+                           headers={"content-type": "text/csv"})
+    assert imported.status_code == 200, imported.text
+    after_import = storage.latest_snapshot(db_path, 2026)[1]
+    assert after_import is not original
+
+    refreshed_snapshot, _ = demo_data()
+    monkeypatch.setattr(main_module, "fetch_player_snapshot", lambda season, http_client: refreshed_snapshot)
+    refreshed = client.post("/api/refresh/mlb?season=2026")
+    assert refreshed.status_code == 200, refreshed.text
+    current = storage.latest_snapshot(db_path, 2026)
+    assert current[0] == refreshed.json()["snapshot_id"]
+    assert current[1] is not after_import
+    assert storage.latest_snapshot(db_path, 2026)[1] is current[1]
+
+def test_saved_v2_scenario_keeps_its_stored_war_under_v3(tmp_path):
+    import json
+    import sqlite3
+
+    db_path = tmp_path / "test.db"
+    client = TestClient(create_app(db_path))
+    client.post("/api/demo/seed")
+    made = client.post("/api/scenarios", json={"season": 2026, "cap_usd": 150_000_000}).json()
+    legacy_war = 123.456
+    with sqlite3.connect(db_path) as db:
+        payload = json.loads(db.execute("SELECT payload FROM scenarios WHERE id=?", (made["id"],)).fetchone()[0])
+        payload["model_version"] = "war-proxy-v2"
+        payload["roster"]["total_war"] = legacy_war
+        db.execute("UPDATE scenarios SET payload=? WHERE id=?", (json.dumps(payload), made["id"]))
+
+    reopened = client.get(f"/api/scenarios/{made['id']}")
+
+    assert reopened.status_code == 200
+    assert reopened.json()["model_version"] == "war-proxy-v2"
+    assert reopened.json()["roster"]["total_war"] == legacy_war

@@ -1,5 +1,6 @@
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
+from time import perf_counter
 
 from ortools.sat.python import cp_model
 
@@ -94,7 +95,7 @@ def _weighted_war(picks: list[Pick]) -> float:
 
 def _solve(players: list[Candidate], rules: RosterRules, cap_usd: int | None,
            locked_ids: set[int], excluded_ids: set[int], *, minimize_cost: bool = False,
-           avoid_ids: set[int] | None = None) -> RosterResult:
+           avoid_ids: set[int] | None = None, deadline: float | None = None) -> RosterResult:
     model = cp_model.CpModel()
     by_id = {player.id: player for player in players}
     roles = {_role(slot) for slot in rules.slots}
@@ -142,15 +143,20 @@ def _solve(players: list[Candidate], rules: RosterRules, cap_usd: int | None,
         model.maximize(sum((round(by_id[player_id].war * rules.slot_weights.get(role, 1.0) * 1000) * 1_000_000
                             - by_id[player_id].salary // 1000) * var
                            for (player_id, role), var in variables.items()))
+    solver_limit = SOLVER_SECONDS
+    if deadline is not None:
+        solver_limit = min(solver_limit, deadline - perf_counter())
+    if solver_limit <= 0:
+        return RosterResult("timeout", reason="The scenario solver time budget is exhausted", code="timeout")
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = SOLVER_SECONDS
+    solver.parameters.max_time_in_seconds = solver_limit
     solver.parameters.num_search_workers = 1
     status = solver.solve(model)
     if status == cp_model.INFEASIBLE:
         return RosterResult("infeasible", reason="No roster satisfies these constraints", code="constraints")
     if status == cp_model.UNKNOWN:
         # Out of time with no answer: that is not the same as "impossible".
-        return RosterResult("timeout", reason=f"The solver hit its {SOLVER_SECONDS}s limit before finding a roster",
+        return RosterResult("timeout", reason=f"The solver hit its {solver_limit:g}s limit before finding a roster",
                             code="timeout")
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         raise RuntimeError(f"Unexpected solver status {status}")
@@ -175,14 +181,16 @@ def _solve(players: list[Candidate], rules: RosterRules, cap_usd: int | None,
 
 def optimize_roster(players: list[Candidate], rules: RosterRules, cap_usd: int,
                     locked_ids: set[int] | None = None, excluded_ids: set[int] | None = None,
-                    avoid_ids: set[int] | None = None) -> RosterResult:
+                    avoid_ids: set[int] | None = None, deadline: float | None = None) -> RosterResult:
     locked_ids = locked_ids or set()
     excluded_ids = excluded_ids or set()
     if locked_ids & excluded_ids:
         return RosterResult("infeasible", reason="A player cannot be both locked and excluded", code="conflict")
-    result = _solve(players, rules, cap_usd, locked_ids, excluded_ids, avoid_ids=avoid_ids)
+    result = _solve(players, rules, cap_usd, locked_ids, excluded_ids,
+                    avoid_ids=avoid_ids, deadline=deadline)
     if result.code == "constraints":
-        cheapest = _solve(players, rules, None, locked_ids, excluded_ids, minimize_cost=True)
+        cheapest = _solve(players, rules, None, locked_ids, excluded_ids,
+                          minimize_cost=True, deadline=deadline)
         if cheapest.status == "optimal":
             result.minimum_feasible_salary = cheapest.total_salary
             result.reason = f"Cap is below the cheapest valid roster (${cheapest.total_salary:,})"
