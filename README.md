@@ -1,5 +1,38 @@
 # Roster Lab
 
+[![Roster checks](https://github.com/lushy6/roster-lab/actions/workflows/ci.yml/badge.svg)](https://github.com/lushy6/roster-lab/actions/workflows/ci.yml)
+
+**Python · FastAPI · OR-Tools · SQLite · React · TypeScript**
+
+![Roster built from fictional demo players](docs/preview.png)
+
+## Quick start: no data download or API key
+
+Requires Python 3.12+ and Node.js 22+. From the repository root:
+
+```sh
+python -m venv .venv
+# Windows: .venv\Scripts\activate
+# macOS/Linux: source .venv/bin/activate
+python -m pip install -r backend/requirements.lock
+cd backend
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+In another terminal, from the repository root:
+
+```sh
+cd frontend
+npm ci
+npm run dev
+```
+
+Open the local URL, choose **Try demo data**, then **Build roster**. Change the payroll limit, lock a player, and compare saved scenarios. Demo players are fictional. Contracts, Market, and Season lab are previews, not completed forecasts.
+
+**Verified October 17, 2026:** 79 backend tests, 14 frontend unit tests, and 7 browser tests passed; lint and production build passed. The tests cover constraints, salary imports, data safety, CSV export, saved scenarios, player locks, error handling, demo exit, and phone-width overflow.
+
+Browser tests support Windows and Unix virtual environments. Set `ROSTER_PYTHON` to a Python executable for another test environment. See Actions for automated checks.
+
 A local MLB front-office simulator. The first playable slice builds a hypothetical 26-player roster under a user-set payroll limit. It keeps player performance and attributed salary inputs separate.
 
 ## Development

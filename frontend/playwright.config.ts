@@ -3,6 +3,7 @@ import path from 'node:path'
 import { API_URL, WEB_URL } from './tests/env'
 
 const port = (url: string) => new URL(url).port
+const python = process.env.ROSTER_PYTHON || path.resolve('..', '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python')
 // Its own database file: the suite seeds demo data and must never touch data/roster.db.
 const e2eDb = path.resolve('.e2e', `roster-${process.pid}.db`)
 
@@ -12,7 +13,7 @@ export default defineConfig({
   use: { baseURL: WEB_URL },
   webServer: [
     {
-      command: `..\\.venv\\Scripts\\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port ${port(API_URL)}`,
+      command: `"${python}" -m uvicorn app.main:app --host 127.0.0.1 --port ${port(API_URL)}`,
       cwd: '../backend',
       url: `${API_URL}/api/status`,
       env: { ...process.env as Record<string, string>, ROSTER_DB: e2eDb },
