@@ -16,7 +16,7 @@ python -m venv .venv
 # macOS/Linux: source .venv/bin/activate
 python -m pip install -r backend/requirements.lock
 cd backend
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --no-proxy-headers
 ```
 
 In another terminal, from the repository root:
@@ -37,7 +37,7 @@ A local MLB front-office simulator. The first playable slice builds a hypothetic
 
 ## Development
 
-From `backend`, run `..\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --no-proxy-headers` (the flag keeps the login rate limit tied to the real client address; see Accounts). From `frontend`, run `npm install` and `npm run dev`. The frontend expects the API on `http://127.0.0.1:8000` (override with `VITE_API_URL`). Python dependencies are pinned in `backend/requirements.lock`.
+From `backend`, run `..\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --no-proxy-headers` (the flag keeps the login rate limit tied to the real client address; see Accounts). From `frontend`, run `npm install` and `npm run dev`. The frontend expects the API on port 8000 of the same host name the page was opened on (override with `VITE_API_URL`); open the UI from an origin listed in `ROSTER_ALLOWED_ORIGINS`. Python dependencies are pinned in `backend/requirements.lock`.
 
 The API stores everything in `data/roster.db`. Set `ROSTER_DB` to a file path to use a different database, for example when experimenting.
 
