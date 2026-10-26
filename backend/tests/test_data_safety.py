@@ -161,12 +161,16 @@ def test_seasons_endpoint_is_empty_on_a_fresh_database(tmp_path):
     assert TestClient(create_app(tmp_path / "test.db")).get("/api/seasons").json() == []
 
 
-def test_cors_allows_any_localhost_port_but_not_lookalike_hosts(tmp_path):
+def test_cors_allows_only_configured_origins(tmp_path, monkeypatch):
     client = TestClient(create_app(tmp_path / "test.db"))
-    def allowed(origin: str) -> str | None:
-        return client.get("/api/status", headers={"Origin": origin}).headers.get("access-control-allow-origin")
-    assert allowed("http://127.0.0.1:5183") == "http://127.0.0.1:5183"
+    def allowed(origin: str, c=client) -> str | None:
+        return c.get("/api/status", headers={"Origin": origin}).headers.get("access-control-allow-origin")
     assert allowed("http://localhost:5173") == "http://localhost:5173"
+    assert allowed("http://127.0.0.1:5173") == "http://127.0.0.1:5173"
+    assert allowed("http://127.0.0.1:5183") is None  # another local port is not trusted by default
+    monkeypatch.setenv("ROSTER_ALLOWED_ORIGINS", "http://127.0.0.1:5183")
+    e2e = TestClient(create_app(tmp_path / "test.db"))
+    assert allowed("http://127.0.0.1:5183", e2e) == "http://127.0.0.1:5183"
     assert allowed("http://localhost.evil.example") is None
     assert allowed("https://127.0.0.1:5173") is None
 

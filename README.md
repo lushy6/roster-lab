@@ -37,7 +37,7 @@ A local MLB front-office simulator. The first playable slice builds a hypothetic
 
 ## Development
 
-From `backend`, run `..\.venv\Scripts\python.exe -m uvicorn app.main:app --reload`. From `frontend`, run `npm install` and `npm run dev`. The frontend expects the API on `http://127.0.0.1:8000` (override with `VITE_API_URL`). Python dependencies are pinned in `backend/requirements.lock`.
+From `backend`, run `..\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --no-proxy-headers` (the flag keeps the login rate limit tied to the real client address; see Accounts). From `frontend`, run `npm install` and `npm run dev`. The frontend expects the API on `http://127.0.0.1:8000` (override with `VITE_API_URL`). Python dependencies are pinned in `backend/requirements.lock`.
 
 The API stores everything in `data/roster.db`. Set `ROSTER_DB` to a file path to use a different database, for example when experimenting.
 
@@ -78,13 +78,24 @@ without an account, including every scenario saved before accounts existed, stay
 - **Sessions** are random 256-bit tokens in an `HttpOnly`, `SameSite=Lax` cookie that lasts 14 days. The database
   stores only a SHA-256 of each token, and signing out deletes it server-side. Set `ROSTER_SECURE_COOKIES=1` when
   serving over HTTPS.
-- **Abuse limits:** 5 failed logins per email and address per 15 minutes, 5 registrations per address per hour
-  (HTTP 429 with `Retry-After`). The limiter lives in process memory, which suits this single-process local app; a
+- **Abuse limits** (HTTP 429 with `Retry-After`): 5 failed logins per email and address and 20 per email alone per
+  15 minutes, 50 login attempts per address across all emails, 5 registrations per address per hour, and at most 4
+  password hashes running at once. Run uvicorn with `--no-proxy-headers`: by default it trusts `X-Forwarded-For`
+  from localhost, which would let a caller pick their own "address". The per-email limit holds either way. The
+  limiter lives in process memory and sweeps idle keys, which suits this single-process local app; a
   multi-worker deployment would need a shared store.
-- **Cross-site requests:** any POST/PUT/PATCH/DELETE carrying a non-local `Origin` is refused with 403.
-- **Tests:** `backend/tests/test_auth.py` (19 tests: users A and B, an anonymous visitor, expiry, rate limits,
+- **Trusted origins:** only the origins in `ROSTER_ALLOWED_ORIGINS` (default: the Vite dev and preview servers,
+  ports 5173 and 4173 on `localhost` and `127.0.0.1`) get credentialed CORS. Any other local port is untrusted,
+  because browsers treat every port on a host as the same site for cookies. POST/PUT/PATCH/DELETE from any other
+  origin, or with `Sec-Fetch-Site: cross-site` and no `Origin`, is refused with 403.
+- **Sessions rotate on login:** signing in again invalidates the previous session token.
+- **Known trade-offs:** registering an email that already exists says so (a normal sign-up message, which reveals
+  that the account exists). Loading demo data, refreshing players and importing salaries still need no account,
+  as before.
+- **Tests:** `backend/tests/test_auth.py` (24 tests: users A and B, an anonymous visitor, expiry, rate limits,
   replayed cookies after sign-out, the schema migration) plus a two-browser Playwright test. Breaking the
-  visibility rule makes 3 of them fail.
+  visibility rule makes 3 of them fail. An independent security review found the proxy-header bypass and the
+  any-local-port trust; both are fixed and covered by tests.
 
 ## Preview tabs
 

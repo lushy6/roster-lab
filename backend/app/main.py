@@ -4,7 +4,6 @@ from tempfile import NamedTemporaryFile
 import csv
 import io
 import os
-import re
 from time import perf_counter
 from typing import Literal
 
@@ -28,9 +27,15 @@ from .value import MODEL_VERSION, innings_pitched, project_values
 
 DEFAULT_DB = Path(__file__).resolve().parents[2] / "data" / "roster.db"
 SCENARIO_SOLVE_BUDGET_SECONDS = 20.0
-# Local-only app: any localhost port may call it (dev server, preview, e2e on its own port).
-LOCAL_ORIGIN = r"http://(localhost|127\.0\.0\.1)(:\d+)?"
+# Only these exact origins may call the API with the session cookie. Not "any localhost port": SameSite ignores
+# ports, so any other local page (another dev server, a notebook) would otherwise read private rosters.
+DEFAULT_ORIGINS = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173"
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+def allowed_origins() -> list[str]:
+    raw = os.environ.get("ROSTER_ALLOWED_ORIGINS", DEFAULT_ORIGINS)
+    return [origin.strip().rstrip("/") for origin in raw.split(",") if origin.strip()]
 
 
 def default_db_path() -> Path:
@@ -127,20 +132,30 @@ def _candidates(snapshot, salaries):
 def create_app(db_path: Path | None = None) -> FastAPI:
     db_path = db_path or default_db_path()
     app = FastAPI(title="Roster Lab API")
-    app.add_middleware(CORSMiddleware, allow_origin_regex=LOCAL_ORIGIN, allow_credentials=True,
+    origins = allowed_origins()
+    app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True,
                        allow_methods=["*"], allow_headers=["*"])
     secure_cookies = os.environ.get("ROSTER_SECURE_COOKIES") == "1"  # set when served over HTTPS
+    # Three login limits: per address+email (tight), per email alone (so faking the address does not reset it),
+    # and per address across all emails (applied before any password hashing). The address is only trustworthy
+    # when uvicorn runs with --no-proxy-headers; see README.
     login_limiter = auth.RateLimiter(limit=5, window_seconds=15 * 60)
+    login_email_limiter = auth.RateLimiter(limit=20, window_seconds=15 * 60)
+    login_ip_limiter = auth.RateLimiter(limit=50, window_seconds=15 * 60)
     register_limiter = auth.RateLimiter(limit=5, window_seconds=60 * 60)
 
     @app.middleware("http")
     async def reject_foreign_origins(request: Request, call_next):
         # Cookies make cross-site form posts a CSRF risk. Browsers send Origin on such requests, so a
         # state-changing request from any non-local origin is refused before it reaches a handler.
-        origin = request.headers.get("origin")
-        if request.method in UNSAFE_METHODS and origin and not re.fullmatch(LOCAL_ORIGIN, origin):
-            return JSONResponse({"detail": {"code": "bad_origin", "message": "Cross-site request refused."}},
-                                status_code=403)
+        if request.method in UNSAFE_METHODS:
+            origin = request.headers.get("origin")
+            fetch_site = request.headers.get("sec-fetch-site")
+            foreign = (origin is not None and origin.rstrip("/") not in origins) or \
+                      (origin is None and fetch_site in ("cross-site", "same-site"))
+            if foreign:
+                return JSONResponse({"detail": {"code": "bad_origin", "message": "Cross-site request refused."}},
+                                    status_code=403)
         return await call_next(request)
 
     def current_user(request: Request) -> auth.User | None:
@@ -183,7 +198,10 @@ def create_app(db_path: Path | None = None) -> FastAPI:
 
     @app.post("/api/auth/login")
     def login(body: Credentials, request: Request, response: Response):
-        key = f"{_client_ip(request)}|{body.email.strip().lower()}"
+        ip, email = _client_ip(request), body.email.strip().lower()
+        key = f"{ip}|{email}"
+        _limit(login_ip_limiter, ip)
+        _limit(login_email_limiter, email)
         _limit(login_limiter, key)
         try:
             with session(db_path) as db:
@@ -191,6 +209,8 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         except auth.AuthError as exc:
             raise HTTPException(exc.status, detail={"code": exc.code, "message": exc.message}) from None
         login_limiter.reset(key)
+        with session(db_path) as db:  # rotate: a session that existed before this login stops working
+            auth.delete_session(db, request.cookies.get(auth.SESSION_COOKIE))
         return _start_session(response, user)
 
     @app.post("/api/auth/logout")

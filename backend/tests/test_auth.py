@@ -208,3 +208,48 @@ def test_existing_database_gains_owner_column_and_keeps_old_scenarios(tmp_path):
     assert [s["id"] for s in listed] == ["old"] and listed[0]["owned_by_me"] is False
     with sqlite3.connect(path) as db:
         assert "owner_id" in {row[1] for row in db.execute("PRAGMA table_info(scenarios)")}
+
+
+# ---------- hardening found by the security review ----------
+
+def test_only_configured_origins_get_credentialed_cors(app):
+    alice = browser(app, "alice@example.com")
+    good = alice.get("/api/auth/me", headers={"origin": "http://localhost:5173"})
+    other_port = alice.get("/api/auth/me", headers={"origin": "http://localhost:6666"})
+    assert good.headers.get("access-control-allow-origin") == "http://localhost:5173"
+    assert "access-control-allow-origin" not in other_port.headers  # the browser will not hand the body to that page
+    assert alice.post("/api/auth/logout", headers={"origin": "http://localhost:6666"}).status_code == 403
+
+
+def test_unsafe_request_without_origin_but_cross_site_fetch_metadata_is_refused(app):
+    alice = browser(app, "alice@example.com")
+    assert alice.post("/api/auth/logout", headers={"sec-fetch-site": "cross-site"}).status_code == 403
+    assert alice.post("/api/auth/logout", headers={"sec-fetch-site": "same-origin"}).status_code == 200
+
+
+def test_changing_the_client_address_does_not_reset_the_per_email_limit(app):
+    browser(app, "alice@example.com")
+    statuses = []
+    for i in range(25):
+        client = TestClient(app, client=(f"10.0.0.{i}", 50000))  # what a spoofed X-Forwarded-For looks like
+        statuses.append(client.post("/api/auth/login", json={"email": "alice@example.com", "password": "wrong password!"}).status_code)
+    assert statuses[:20] == [401] * 20 and set(statuses[20:]) == {429}
+
+
+def test_login_rotates_an_existing_session(app):
+    alice = browser(app, "alice@example.com")
+    old = alice.cookies.get(auth.SESSION_COOKIE)
+    assert alice.post("/api/auth/login", json={"email": "alice@example.com", "password": PASSWORD}).status_code == 200
+    assert TestClient(app, cookies={auth.SESSION_COOKIE: old}).get("/api/auth/me").json() is None
+    assert alice.get("/api/auth/me").json()["email"] == "alice@example.com"
+
+
+def test_rate_limiter_sweeps_idle_keys():
+    now = [0.0]
+    limiter = auth.RateLimiter(limit=2, window_seconds=10, clock=lambda: now[0])
+    limiter.MAX_KEYS = 3
+    for k in "abcd":
+        limiter.retry_after(k)
+    now[0] = 20.0
+    limiter.retry_after("e")
+    assert set(limiter.hits) == {"e"}

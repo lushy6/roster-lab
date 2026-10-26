@@ -12,7 +12,7 @@ import hmac
 import re
 import secrets
 import sqlite3
-from threading import Lock
+from threading import BoundedSemaphore, Lock
 from time import monotonic
 from uuid import uuid4
 
@@ -22,6 +22,8 @@ PASSWORD_MIN, PASSWORD_MAX = 10, 128
 EMAIL_RE = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,190}\.[^@\s]{2,}$")
 # scrypt cost: n=2**14, r=8 is the OWASP baseline for interactive logins (about 16 MiB, tens of ms).
 SCRYPT_N, SCRYPT_R, SCRYPT_P = 2**14, 8, 1
+# Each hash takes ~16 MiB and tens of ms; capping concurrent hashes bounds memory and CPU under a login flood.
+_HASH_SLOTS = BoundedSemaphore(4)
 
 
 class AuthError(Exception):
@@ -50,7 +52,8 @@ def ensure_tables(db: sqlite3.Connection) -> None:
 
 def hash_password(password: str) -> str:
     salt = secrets.token_bytes(16)
-    digest = hashlib.scrypt(password.encode(), salt=salt, n=SCRYPT_N, r=SCRYPT_R, p=SCRYPT_P, dklen=32)
+    with _HASH_SLOTS:
+        digest = hashlib.scrypt(password.encode(), salt=salt, n=SCRYPT_N, r=SCRYPT_R, p=SCRYPT_P, dklen=32)
     return f"scrypt${SCRYPT_N}${SCRYPT_R}${SCRYPT_P}${salt.hex()}${digest.hex()}"
 
 
@@ -59,8 +62,9 @@ def verify_password(password: str, stored: str) -> bool:
         scheme, n, r, p, salt, digest = stored.split("$")
         if scheme != "scrypt":
             return False
-        candidate = hashlib.scrypt(password.encode(), salt=bytes.fromhex(salt), n=int(n), r=int(r), p=int(p),
-                                   dklen=len(digest) // 2)
+        with _HASH_SLOTS:
+            candidate = hashlib.scrypt(password.encode(), salt=bytes.fromhex(salt), n=int(n), r=int(r), p=int(p),
+                                       dklen=len(digest) // 2)
     except (ValueError, TypeError):
         return False
     return hmac.compare_digest(candidate.hex(), digest)
@@ -139,6 +143,8 @@ class RateLimiter:
 
     Good enough for a single-process local app; a multi-worker deployment would need a shared store (Redis)."""
 
+    MAX_KEYS = 10_000  # beyond this, keys with no recent attempts are swept so memory stays bounded
+
     def __init__(self, limit: int, window_seconds: float, clock=monotonic):
         self.limit, self.window, self.clock = limit, window_seconds, clock
         self.hits: dict[str, deque[float]] = defaultdict(deque)
@@ -148,6 +154,10 @@ class RateLimiter:
         """Record one attempt for `key`; return seconds to wait if it is over the limit, else None."""
         now = self.clock()
         with self.lock:
+            if len(self.hits) > self.MAX_KEYS:
+                cutoff = now - self.window
+                for stale in [k for k, d in self.hits.items() if not d or d[-1] <= cutoff]:
+                    del self.hits[stale]
             q = self.hits[key]
             while q and q[0] <= now - self.window:
                 q.popleft()

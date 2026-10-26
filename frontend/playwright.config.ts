@@ -13,10 +13,11 @@ export default defineConfig({
   use: { baseURL: WEB_URL },
   webServer: [
     {
-      command: `"${python}" -m uvicorn app.main:app --host 127.0.0.1 --port ${port(API_URL)}`,
+      command: `"${python}" -m uvicorn app.main:app --host 127.0.0.1 --port ${port(API_URL)} --no-proxy-headers`,
       cwd: '../backend',
       url: `${API_URL}/api/status`,
-      env: { ...process.env as Record<string, string>, ROSTER_DB: e2eDb },
+      // The API trusts exactly the e2e UI's origin, as it would the dev server's in normal use.
+      env: { ...process.env as Record<string, string>, ROSTER_DB: e2eDb, ROSTER_ALLOWED_ORIGINS: new URL(WEB_URL).origin },
       reuseExistingServer: false, // a stale server on this port would silently run against the wrong database
       timeout: 60000,
     },

@@ -39,7 +39,11 @@ def _connect(path: Path) -> sqlite3.Connection:
     # Migration: scenarios saved before accounts existed have no owner and stay public.
     columns = {row["name"] for row in connection.execute("PRAGMA table_info(scenarios)")}
     if "owner_id" not in columns:
-        connection.execute("ALTER TABLE scenarios ADD COLUMN owner_id TEXT")
+        try:
+            connection.execute("ALTER TABLE scenarios ADD COLUMN owner_id TEXT")
+        except sqlite3.OperationalError as exc:  # another connection migrated first
+            if "duplicate column" not in str(exc):
+                raise
     connection.execute("CREATE INDEX IF NOT EXISTS scenarios_owner ON scenarios(owner_id)")
     auth.ensure_tables(connection)
     return connection
