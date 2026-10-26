@@ -117,3 +117,37 @@ test('long source URLs never make the page scroll sideways on a phone', async ({
   const widths = await page.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }))
   expect(widths.page).toBeLessThanOrEqual(widths.viewport)
 })
+
+test('a signed-in roster is private to its owner and the owner can delete it', async ({ browser, request }) => {
+  test.setTimeout(120000)
+  await seedDemo(request)
+  const stamp = Date.now()
+  const signUp = async (email: string) => {
+    const context = await browser.newContext()
+    const page = await context.newPage()
+    await page.goto('/')
+    await page.getByLabel('Email').fill(email)
+    await page.getByLabel('Password', { exact: true }).fill('correct horse battery')
+    await page.getByRole('button', { name: 'Create account' }).click()
+    await expect(page.locator(".account-state")).toContainText(`Signed in as ${email}`)
+    return { context, page }
+  }
+
+  const alice = await signUp(`alice-${stamp}@example.com`)
+  await alice.page.getByRole('button', { name: 'Build roster' }).click()
+  await expect(alice.page.getByRole('heading', { name: 'Your 26-player roster' })).toBeVisible({ timeout: 30000 })
+  await alice.page.getByLabel('Only mine').check()
+  await expect(alice.page.getByRole('button', { name: /Yours, private/ })).toHaveCount(1)
+
+  const bob = await signUp(`bob-${stamp}@example.com`)
+  await bob.page.reload()
+  await expect(bob.page.getByRole('button', { name: /Yours, private/ })).toHaveCount(0)
+
+  alice.page.once('dialog', dialog => void dialog.accept())
+  await alice.page.getByRole('button', { name: /^Delete scenario from/ }).click()
+  await expect(alice.page.getByText('You have no saved rosters for 2026 yet.')).toBeVisible()
+  await alice.page.getByRole('button', { name: 'Sign out' }).click()
+  await expect(alice.page.getByRole('button', { name: 'Sign in' })).toBeVisible()
+  await alice.context.close()
+  await bob.context.close()
+})

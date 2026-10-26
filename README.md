@@ -68,6 +68,24 @@ Position eligibility can still put a bench player above a weaker starter: the be
 
 If the solver runs out of time (15 seconds per solve) before finding any roster, the API returns 503 `solver_timeout`. That is different from a payroll limit that is genuinely too low, which returns 422 with the cheapest valid payroll. If player or salary data is replaced and pruned while a build is solving (for example by a refresh in another tab), the build returns 409 `data_changed` instead of saving a scenario that points at data that no longer exists; build again.
 
+## Accounts and private rosters
+
+Signing in is optional. A roster built while signed in is **private**: only its owner can list, reopen or delete it,
+and anyone else gets the same 404 as for an id that does not exist, so ids cannot be probed. Rosters built
+without an account, including every scenario saved before accounts existed, stay shared and cannot be deleted.
+
+- **Passwords** are hashed with scrypt (standard library, n=2^14, r=8, per-user salt); 10–128 characters.
+- **Sessions** are random 256-bit tokens in an `HttpOnly`, `SameSite=Lax` cookie that lasts 14 days. The database
+  stores only a SHA-256 of each token, and signing out deletes it server-side. Set `ROSTER_SECURE_COOKIES=1` when
+  serving over HTTPS.
+- **Abuse limits:** 5 failed logins per email and address per 15 minutes, 5 registrations per address per hour
+  (HTTP 429 with `Retry-After`). The limiter lives in process memory, which suits this single-process local app; a
+  multi-worker deployment would need a shared store.
+- **Cross-site requests:** any POST/PUT/PATCH/DELETE carrying a non-local `Origin` is refused with 403.
+- **Tests:** `backend/tests/test_auth.py` (19 tests: users A and B, an anonymous visitor, expiry, rate limits,
+  replayed cookies after sign-out, the schema migration) plus a two-browser Playwright test. Breaking the
+  visibility rule makes 3 of them fail.
+
 ## Preview tabs
 
 Contracts, Market and Season lab are placeholders and are labelled "preview" in the UI. Contracts repeats the 2026 salary for later years, Market only reports cap room, and Season lab draws a band whose width you pick with a slider; none of them is derived from contract, transaction, playing-time or injury data.

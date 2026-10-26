@@ -421,3 +421,23 @@ a { color: inherit; }
   .source-grid { grid-template-columns: 1fr; gap: 0; } .source-section ul { columns: 1; }
   .site-footer { padding: 18px 16px; flex-direction: column; } .empty-result { min-height: 320px; padding: 32px 20px; }
 }
+
+/* Account panel and per-user history */
+.account-panel { display: grid; gap: 10px; padding: 18px; }
+.account-panel h2 { margin: 0; }
+.account-state, .account-hint { margin: 0; font-size: 13px; color: #4f6876; }
+.account-hint { font-size: 12px; margin-top: -4px; }
+.account-form { display: grid; gap: 10px; }
+.account-form label { display: grid; gap: 4px; font-size: 13px; font-weight: 600; color: #244c64; }
+.account-form input { min-height: 44px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: inherit; }
+.account-form input:focus-visible { outline: 2px solid var(--red); outline-offset: 1px; }
+.account-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.account-panel button { min-height: 44px; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: #183447; font-weight: 600; }
+.account-panel button[type="submit"] { background: #183447; color: #fff; border-color: #183447; }
+.account-error { margin: 0; font-size: 13px; color: #a3262a; }
+.history-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.mine-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #4f6876; min-height: 44px; }
+.history-list { list-style: none; margin: 0; padding: 0; }
+.history-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: stretch; }
+.history-delete { min-width: 64px; min-height: 44px; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: #a3262a; font-size: 12px; font-weight: 600; }
+.history-delete:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }

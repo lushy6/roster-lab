@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Toaster, toast } from 'sonner'
-import { buildScenario, exitDemo, getScenario, getSeasons, getStatus, importSalaries, listScenarios, refreshMlb, salaryTemplateUrl, seedDemo, type SavedScenario, type Scenario, type Status } from './api'
+import { buildScenario, deleteScenario, exitDemo, getAccount, getScenario, getSeasons, getStatus, importSalaries, listScenarios, refreshMlb, salaryTemplateUrl, seedDemo, type Account, type SavedScenario, type Scenario, type Status } from './api'
+import AccountPanel from './components/AccountPanel'
 import ScenarioForm from './components/ScenarioForm'
 import RosterView, { AlternativesAnnouncer } from './components/RosterView'
 import SourceDetails from './components/SourceDetails'
@@ -23,17 +24,21 @@ export default function App() {
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const [tab, setTab] = useState<'roster'|'depth'|'contracts'|'market'|'season'>('roster')
+  const [account, setAccount] = useState<Account | null>(null)
+  const [mineOnly, setMineOnly] = useState(false)
 
   // What the user is looking at right now, for async work that started earlier.
   const seasonRef = useRef(season)
   useEffect(() => { seasonRef.current = season }, [season])
   const latestReload = useRef(0)
+  const mineRef = useRef(false)
+  useEffect(() => { mineRef.current = mineOnly && account !== null }, [mineOnly, account])
 
   /** Loads status, saved scenarios and seasons. Only the newest call may update the screen; resolves false on failure. */
   const reloadStatus = useCallback(async (selectedSeason: number): Promise<boolean> => {
     const id = ++latestReload.current
     try {
-      const [nextStatus, history, available] = await Promise.all([getStatus(selectedSeason), listScenarios(selectedSeason), getSeasons()])
+      const [nextStatus, history, available] = await Promise.all([getStatus(selectedSeason), listScenarios(selectedSeason, mineRef.current), getSeasons()])
       if (id !== latestReload.current) return true
       setStatus(nextStatus)
       setSavedScenarios(history)
@@ -49,6 +54,22 @@ export default function App() {
     }
   }, [])
   useEffect(() => { setScenario(null); void reloadStatus(season) }, [season, reloadStatus])
+  useEffect(() => { void getAccount().then(setAccount).catch(() => setAccount(null)) }, [])
+  useEffect(() => { void reloadStatus(seasonRef.current) }, [mineOnly, account, reloadStatus])
+
+  function onAccountChange(next: Account | null) {
+    setAccount(next)
+    if (!next) { setMineOnly(false); setScenario(null) } // a private roster must not stay on screen after sign-out
+    toast.success(next ? `Signed in as ${next.email}` : 'Signed out')
+  }
+
+  async function removeScenario(saved: SavedScenario) {
+    if (!window.confirm(`Delete the scenario from ${new Date(saved.created_at).toLocaleString()}? This cannot be undone.`)) return
+    await action(async () => {
+      await deleteScenario(saved.id)
+      setScenario(current => (current?.id === saved.id ? null : current))
+    }, 'Scenario deleted.')
+  }
 
   // Locked and excluded ids only mean something for the data they were picked from.
   const isDemo = status?.is_demo ?? false
@@ -121,6 +142,7 @@ export default function App() {
       </div>
       <div className="workspace">
         <aside className="controls">
+          <AccountPanel account={account} busy={busy} onChange={onAccountChange} />
           <ScenarioForm season={season} seasons={seasonChoices} cap={cap} lockedIds={lockedIds} excludedIds={excludedIds} busy={busy} onSeason={setSeason} onCap={setCap} onLockedIds={setLockedIds} onExcludedIds={setExcludedIds} onBuild={() => void build()} />
           <section className="data-panel card">
             <h2>Player data</h2>
@@ -139,18 +161,28 @@ export default function App() {
               <label className="upload-button">Import salary CSV<input aria-label="Import salary CSV" type="file" accept=".csv,text/csv" disabled={busy || Boolean(status?.is_demo)} onChange={event => { const input = event.target; const file = input.files?.[0]; input.value = ''; void upload(file) }} /></label>
             </div>
             <p className="data-help">Real-player rosters need an attributed salary CSV. Imports add to the salaries already on file, and a player in the CSV replaces their earlier salary. Players without a salary are excluded and shown in the coverage report.{status?.is_demo ? ' Exit demo mode to import real salaries.' : ''}</p>
-            {savedScenarios.length > 0 && (
+            {(savedScenarios.length > 0 || mineOnly) && (
               <div className="history">
-                <h3>Saved scenarios</h3>
-                <div className="history-list">
-                  {savedScenarios.map(saved => (
-                    <button type="button" className="history-button" key={saved.id} disabled={busy} onClick={() => { setBusy(true); void getScenario(saved.id).then(s => { setScenario(s); toast.success('Scenario reopened') }).catch(() => { const m='Could not reopen that scenario.'; setMessage(m); toast.error(m) }).finally(() => setBusy(false)) }}>
-                      <span>{saved.is_demo ? 'Demo' : 'Scenario'} · {new Date(saved.created_at).toLocaleDateString()}</span>
-                      <strong>{saved.total_war.toFixed(1)} WAR</strong>
-                      <small>{(saved.cap_usd / 1_000_000).toFixed(0)}m cap · {(saved.total_salary / 1_000_000).toFixed(1)}m payroll</small>
-                    </button>
-                  ))}
+                <div className="history-head">
+                  <h3>Saved scenarios</h3>
+                  {account && <label className="mine-toggle"><input type="checkbox" checked={mineOnly} onChange={e => setMineOnly(e.target.checked)} disabled={busy} />Only mine</label>}
                 </div>
+                {savedScenarios.length === 0 && <p className="data-help">You have no saved rosters for {season} yet.</p>}
+                <ul className="history-list">
+                  {savedScenarios.map(saved => {
+                    const when = new Date(saved.created_at).toLocaleDateString()
+                    return (
+                      <li className="history-item" key={saved.id}>
+                        <button type="button" className="history-button" disabled={busy} onClick={() => { setBusy(true); void getScenario(saved.id).then(s => { setScenario(s); toast.success('Scenario reopened') }).catch(() => { const m='Could not reopen that scenario.'; setMessage(m); toast.error(m) }).finally(() => setBusy(false)) }}>
+                          <span>{saved.is_demo ? 'Demo' : 'Scenario'} · {when}{saved.owned_by_me ? ' · Yours, private' : ''}</span>
+                          <strong>{saved.total_war.toFixed(1)} WAR</strong>
+                          <small>{(saved.cap_usd / 1_000_000).toFixed(0)}m cap · {(saved.total_salary / 1_000_000).toFixed(1)}m payroll</small>
+                        </button>
+                        {saved.owned_by_me && <button type="button" className="history-delete" disabled={busy} aria-label={`Delete scenario from ${when}, ${saved.total_war.toFixed(1)} WAR`} onClick={() => void removeScenario(saved)}>Delete</button>}
+                      </li>
+                    )
+                  })}
+                </ul>
               </div>
             )}
           </section>
