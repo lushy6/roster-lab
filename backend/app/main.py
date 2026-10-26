@@ -4,26 +4,33 @@ from tempfile import NamedTemporaryFile
 import csv
 import io
 import os
+import re
 from time import perf_counter
 from typing import Literal
 
-from fastapi import Body, FastAPI, HTTPException, Response
+from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 import httpx
 from pydantic import BaseModel, Field
 
+from . import auth
 from .demo import demo_data
 from .mlb import fetch_player_snapshot
 from .optimizer import Candidate, RosterRules, optimize_roster
 from .salaries import MAX_SALARY_USD, load_salary_csv, salary_coverage
-from .storage import (LiveDataPresent, VersionGone, delete_demo, get_scenario, latest_salaries, latest_snapshot, list_scenarios,
-                      save_demo, save_salaries, save_scenario, save_snapshot, seasons_with_data)
+from .storage import (LiveDataPresent, NotOwner, VersionGone, delete_demo, delete_scenario, get_scenario, latest_salaries,
+                      latest_snapshot, list_scenarios, save_demo, save_salaries, save_scenario, save_snapshot,
+                      seasons_with_data, session)
 from .domain import SalaryRecord
 from .value import MODEL_VERSION, innings_pitched, project_values
 
 
 DEFAULT_DB = Path(__file__).resolve().parents[2] / "data" / "roster.db"
 SCENARIO_SOLVE_BUDGET_SECONDS = 20.0
+# Local-only app: any localhost port may call it (dev server, preview, e2e on its own port).
+LOCAL_ORIGIN = r"http://(localhost|127\.0\.0\.1)(:\d+)?"
+UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 
 def default_db_path() -> Path:
@@ -77,6 +84,11 @@ def _stats_for_pick(player, season: int) -> dict:
     }
 
 
+class Credentials(BaseModel):
+    email: str = Field(max_length=254)
+    password: str = Field(max_length=auth.PASSWORD_MAX * 4)  # the length policy is checked in auth, with a clear message
+
+
 class ScenarioRequest(BaseModel):
     season: int = Field(ge=1900, le=2100)
     cap_usd: int = Field(gt=0, le=MAX_SALARY_USD)
@@ -115,9 +127,82 @@ def _candidates(snapshot, salaries):
 def create_app(db_path: Path | None = None) -> FastAPI:
     db_path = db_path or default_db_path()
     app = FastAPI(title="Roster Lab API")
-    # Local-only app: any localhost port may call it (dev server, preview, e2e on its own port).
-    app.add_middleware(CORSMiddleware, allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
+    app.add_middleware(CORSMiddleware, allow_origin_regex=LOCAL_ORIGIN, allow_credentials=True,
                        allow_methods=["*"], allow_headers=["*"])
+    secure_cookies = os.environ.get("ROSTER_SECURE_COOKIES") == "1"  # set when served over HTTPS
+    login_limiter = auth.RateLimiter(limit=5, window_seconds=15 * 60)
+    register_limiter = auth.RateLimiter(limit=5, window_seconds=60 * 60)
+
+    @app.middleware("http")
+    async def reject_foreign_origins(request: Request, call_next):
+        # Cookies make cross-site form posts a CSRF risk. Browsers send Origin on such requests, so a
+        # state-changing request from any non-local origin is refused before it reaches a handler.
+        origin = request.headers.get("origin")
+        if request.method in UNSAFE_METHODS and origin and not re.fullmatch(LOCAL_ORIGIN, origin):
+            return JSONResponse({"detail": {"code": "bad_origin", "message": "Cross-site request refused."}},
+                                status_code=403)
+        return await call_next(request)
+
+    def current_user(request: Request) -> auth.User | None:
+        token = request.cookies.get(auth.SESSION_COOKIE)
+        if not token:
+            return None
+        with session(db_path) as db:
+            return auth.user_for_token(db, token)
+
+    def require_user(user: auth.User | None = Depends(current_user)) -> auth.User:
+        if user is None:
+            raise HTTPException(401, detail={"code": "not_signed_in", "message": "Sign in first."})
+        return user
+
+    def _limit(limiter: auth.RateLimiter, key: str) -> None:
+        wait = limiter.retry_after(key)
+        if wait is not None:
+            raise HTTPException(429, detail={"code": "rate_limited", "message": f"Too many attempts. Try again in {wait} s."},
+                                headers={"Retry-After": str(wait)})
+
+    def _start_session(response: Response, user: auth.User) -> dict:
+        with session(db_path) as db:
+            token = auth.create_session(db, user)
+        response.set_cookie(auth.SESSION_COOKIE, token, max_age=auth.SESSION_DAYS * 86400, httponly=True,
+                            samesite="lax", secure=secure_cookies, path="/")
+        return {"id": user.id, "email": user.email}
+
+    def _client_ip(request: Request) -> str:
+        return request.client.host if request.client else "unknown"
+
+    @app.post("/api/auth/register", status_code=201)
+    def register(body: Credentials, request: Request, response: Response):
+        _limit(register_limiter, _client_ip(request))
+        try:
+            with session(db_path) as db:
+                user = auth.register(db, body.email, body.password)
+        except auth.AuthError as exc:
+            raise HTTPException(exc.status, detail={"code": exc.code, "message": exc.message}) from None
+        return _start_session(response, user)
+
+    @app.post("/api/auth/login")
+    def login(body: Credentials, request: Request, response: Response):
+        key = f"{_client_ip(request)}|{body.email.strip().lower()}"
+        _limit(login_limiter, key)
+        try:
+            with session(db_path) as db:
+                user = auth.authenticate(db, body.email, body.password)
+        except auth.AuthError as exc:
+            raise HTTPException(exc.status, detail={"code": exc.code, "message": exc.message}) from None
+        login_limiter.reset(key)
+        return _start_session(response, user)
+
+    @app.post("/api/auth/logout")
+    def logout(request: Request, response: Response):
+        with session(db_path) as db:
+            auth.delete_session(db, request.cookies.get(auth.SESSION_COOKIE))
+        response.delete_cookie(auth.SESSION_COOKIE, path="/", httponly=True, samesite="lax", secure=secure_cookies)
+        return {"message": "Signed out"}
+
+    @app.get("/api/auth/me")
+    def me(user: auth.User | None = Depends(current_user)):
+        return {"id": user.id, "email": user.email} if user else None
 
     @app.get("/api/status")
     def status(season: int = 2026):
@@ -266,7 +351,7 @@ def create_app(db_path: Path | None = None) -> FastAPI:
                 "missing_player_ids": result.missing_player_ids, "missing_players": missing}
 
     @app.post("/api/scenarios")
-    def create_scenario(request: ScenarioRequest):
+    def create_scenario(request: ScenarioRequest, user: auth.User | None = Depends(current_user)):
         snapshot_entry = latest_snapshot(db_path, request.season)
         salary_entry = latest_salaries(db_path, request.season)
         if not snapshot_entry or not salary_entry:
@@ -352,19 +437,34 @@ def create_app(db_path: Path | None = None) -> FastAPI:
                    "salary_sources": sorted({record.source_url for record in salaries
                                              if record.player_id in {pick.player_id for pick in result.picks}})}
         try:
-            identifier = save_scenario(db_path, request.season, snapshot_id, salary_id, payload)
+            # Signed in: the scenario is private to its owner. Anonymous: public, as before accounts existed.
+            identifier = save_scenario(db_path, request.season, snapshot_id, salary_id, payload,
+                                       owner_id=user.id if user else None)
         except VersionGone:
             raise HTTPException(409, detail={"code": "data_changed",
                                              "message": "Player or salary data changed while building. Build again."}) from None
-        return dict(payload, id=identifier, snapshot_id=snapshot_id, salary_id=salary_id)
+        return dict(payload, id=identifier, snapshot_id=snapshot_id, salary_id=salary_id, owned_by_me=user is not None)
 
     @app.get("/api/scenarios")
-    def scenarios(season: int | None = None):
-        return list_scenarios(db_path, season)
+    def scenarios(season: int | None = None, mine: bool = False, user: auth.User | None = Depends(current_user)):
+        if mine and user is None:
+            raise HTTPException(401, detail={"code": "not_signed_in", "message": "Sign in to see your saved rosters."})
+        return list_scenarios(db_path, season, viewer_id=user.id if user else None, mine_only=mine)
+
+    @app.delete("/api/scenarios/{identifier}", status_code=204)
+    def remove_scenario(identifier: str, user: auth.User = Depends(require_user)):
+        try:
+            deleted = delete_scenario(db_path, identifier, user.id)
+        except NotOwner:
+            raise HTTPException(403, detail={"code": "public_scenario",
+                                             "message": "Shared scenarios saved before accounts cannot be deleted."}) from None
+        if not deleted:
+            raise HTTPException(404, detail={"code": "not_found", "message": "Scenario not found"})
+        return Response(status_code=204)
 
     @app.get("/api/scenarios/{identifier}")
-    def scenario(identifier: str):
-        result = get_scenario(db_path, identifier)
+    def scenario(identifier: str, user: auth.User | None = Depends(current_user)):
+        result = get_scenario(db_path, identifier, viewer_id=user.id if user else None)
         if result is None:
             raise HTTPException(404, detail={"code": "not_found", "message": "Scenario not found"})
         # Presentation, not data: re-derive so scenarios saved with an older photo URL still render sharp.

@@ -7,6 +7,7 @@ from pathlib import Path
 import sqlite3
 from uuid import uuid4
 
+from . import auth
 from .domain import Player, PlayerSnapshot, SalaryRecord
 
 
@@ -35,7 +36,20 @@ def _connect(path: Path) -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS salaries (id TEXT PRIMARY KEY, season INTEGER, created_at TEXT, payload TEXT, is_demo INTEGER);
         CREATE TABLE IF NOT EXISTS scenarios (id TEXT PRIMARY KEY, season INTEGER, created_at TEXT, snapshot_id TEXT, salary_id TEXT, payload TEXT);
     """)
+    # Migration: scenarios saved before accounts existed have no owner and stay public.
+    columns = {row["name"] for row in connection.execute("PRAGMA table_info(scenarios)")}
+    if "owner_id" not in columns:
+        connection.execute("ALTER TABLE scenarios ADD COLUMN owner_id TEXT")
+    connection.execute("CREATE INDEX IF NOT EXISTS scenarios_owner ON scenarios(owner_id)")
+    auth.ensure_tables(connection)
     return connection
+
+
+@contextmanager
+def session(path: Path):
+    """Public handle on one committed-or-rolled-back connection (used by the auth endpoints)."""
+    with _session(path) as db:
+        yield db
 
 
 @contextmanager
@@ -190,7 +204,8 @@ def latest_salaries(path: Path, season: int) -> tuple[str, list[SalaryRecord], b
     return row["id"], records, bool(row["is_demo"])
 
 
-def save_scenario(path: Path, season: int, snapshot_id: str, salary_id: str, payload: dict) -> str:
+def save_scenario(path: Path, season: int, snapshot_id: str, salary_id: str, payload: dict,
+                  owner_id: str | None = None) -> str:
     """Save a scenario, refusing if its snapshot or salary version was pruned while it was being solved.
 
     The existence check and the insert share one write-locked transaction, so no prune can run between them;
@@ -201,25 +216,56 @@ def save_scenario(path: Path, season: int, snapshot_id: str, salary_id: str, pay
         if (db.execute("SELECT 1 FROM snapshots WHERE id=?", (snapshot_id,)).fetchone() is None
                 or db.execute("SELECT 1 FROM salaries WHERE id=?", (salary_id,)).fetchone() is None):
             raise VersionGone()
-        db.execute("INSERT INTO scenarios VALUES (?, ?, ?, ?, ?, ?)",
-                   (identifier, season, datetime.now().isoformat(), snapshot_id, salary_id, json.dumps(payload)))
+        db.execute("INSERT INTO scenarios (id, season, created_at, snapshot_id, salary_id, payload, owner_id) "
+                   "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                   (identifier, season, datetime.now().isoformat(), snapshot_id, salary_id, json.dumps(payload), owner_id))
     return identifier
 
 
-def get_scenario(path: Path, identifier: str) -> dict | None:
+def _visible(viewer_id: str | None) -> tuple[str, tuple]:
+    """SQL filter: public (unowned) scenarios plus the viewer's own. Everyone else's are invisible."""
+    if viewer_id is None:
+        return "owner_id IS NULL", ()
+    return "(owner_id IS NULL OR owner_id=?)", (viewer_id,)
+
+
+def get_scenario(path: Path, identifier: str, viewer_id: str | None = None) -> dict | None:
+    """None both when the scenario does not exist and when it belongs to someone else, so ids cannot be probed."""
+    clause, params = _visible(viewer_id)
     with _session(path) as db:
-        row = db.execute("SELECT * FROM scenarios WHERE id=?", (identifier,)).fetchone()
+        row = db.execute(f"SELECT * FROM scenarios WHERE id=? AND {clause}", (identifier, *params)).fetchone()
     if row is None:
         return None
     return dict(json.loads(row["payload"]), id=row["id"], snapshot_id=row["snapshot_id"],
-                salary_id=row["salary_id"], created_at=row["created_at"])
+                salary_id=row["salary_id"], created_at=row["created_at"],
+                owned_by_me=viewer_id is not None and row["owner_id"] == viewer_id)
 
 
-def list_scenarios(path: Path, season: int | None = None, limit: int = 20) -> list[dict]:
-    query = "SELECT * FROM scenarios"
-    params: list[object] = []
+class NotOwner(Exception):
+    """Raised when deleting a public scenario, which has no owner who could delete it."""
+
+
+def delete_scenario(path: Path, identifier: str, user_id: str) -> bool:
+    """Delete the caller's own scenario. False if it does not exist or is someone else's (indistinguishable)."""
+    with _session(path) as db:
+        row = db.execute("SELECT owner_id FROM scenarios WHERE id=?", (identifier,)).fetchone()
+        if row is None or (row["owner_id"] is not None and row["owner_id"] != user_id):
+            return False
+        if row["owner_id"] is None:
+            raise NotOwner()
+        db.execute("DELETE FROM scenarios WHERE id=? AND owner_id=?", (identifier, user_id))
+    return True
+
+
+def list_scenarios(path: Path, season: int | None = None, limit: int = 20, viewer_id: str | None = None,
+                   mine_only: bool = False) -> list[dict]:
+    if mine_only and viewer_id is None:
+        return []
+    clause, visible_params = ("owner_id=?", (viewer_id,)) if mine_only else _visible(viewer_id)
+    query = f"SELECT * FROM scenarios WHERE {clause}"
+    params: list[object] = list(visible_params)
     if season is not None:
-        query += " WHERE season=?"
+        query += " AND season=?"
         params.append(season)
     query += " ORDER BY rowid DESC LIMIT ?"
     params.append(limit)
@@ -239,5 +285,6 @@ def list_scenarios(path: Path, season: int | None = None, limit: int = 20) -> li
             "is_demo": bool(payload.get("is_demo")),
             "snapshot_id": row["snapshot_id"],
             "salary_id": row["salary_id"],
+            "owned_by_me": viewer_id is not None and row["owner_id"] == viewer_id,
         })
     return summaries
